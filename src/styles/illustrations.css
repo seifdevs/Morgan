@@ -1,0 +1,128 @@
+/* ---------- Hero dashboard (sequence driven by Motion in HeroDashboard; static styles only here) ---------- */
+.hero-art { position: relative; width: 100%; max-width: 600px; aspect-ratio: 600 / 500; margin-inline: auto; }
+.ha-main { position: absolute; inset: 5% 0 0 0; background: linear-gradient(180deg, #151c25, #10161d); border: 1px solid var(--line); border-radius: var(--r-lg); padding: 18px; box-shadow: 0 1px 0 #ffffff08 inset, 0 24px 60px -24px #000a; display: flex; flex-direction: column; gap: 12px; overflow: hidden; }
+.ha-top { display: flex; align-items: center; gap: 6px; }
+.ha-dot { width: 8px; height: 8px; border-radius: 50%; background: #27313c; }
+.ha-title { margin-left: 8px; font-size: 11px; letter-spacing: .12em; text-transform: uppercase; color: var(--muted); }
+.ha-kpis { display: grid; grid-template-columns: repeat(3, 1fr); border: 1px solid var(--line-soft); border-radius: var(--r); }
+.ha-kpis > div { padding: 10px 12px; display: grid; gap: 2px; }
+.ha-kpis > div + div { border-left: 1px solid var(--line-soft); }
+.ha-kpis small { font-size: 10.5px; color: var(--muted); }
+.ha-kpis b { font: 700 clamp(14px, 2.2vw, 20px)/1.2 var(--display); letter-spacing: -0.02em; font-variant-numeric: tabular-nums; }
+.ha-kpis em { font-style: normal; font-size: 10.5px; font-weight: 600; }
+.ha-chart { width: 100%; flex: 1; min-height: 0; }
+.ha-inv { display: grid; grid-template-columns: auto 1fr auto auto; align-items: center; gap: 14px; padding: 12px 4px 2px; border-top: 1px solid var(--line-soft); }
+.ha-inv-id { font-size: 11px; color: var(--muted); letter-spacing: .04em; }
+.ha-inv-who { display: grid; font-weight: 600; font-size: 13px; line-height: 1.25; }
+.ha-inv-who small { color: var(--muted); font-weight: 400; font-size: 11px; }
+.ha-inv b { font: 700 15px var(--display); font-variant-numeric: tabular-nums; }
+.hi-stamp { display: inline-block; font: 800 10px var(--display); letter-spacing: .14em; text-transform: uppercase; color: #5fc79a; border: 1.5px solid #2f9b70; padding: 3px 7px; border-radius: 3px; transform: rotate(-8deg); }
+.ha-inv-note { margin: 0; padding: 0 4px; font-size: 11.5px; color: #5fc79a; }
+.ha-caption { position: absolute; left: 0; top: 0; font-size: 10.5px; letter-spacing: .1em; text-transform: uppercase; color: #8d98a5aa; }
+
+/* ---------- Cash-flow river ---------- */
+.river svg { width: 100%; height: auto; overflow: visible; }
+.rv-band { opacity: 0; }
+.river.play .rv-band { animation: fadeIn 1s var(--ease) forwards; }
+.rv-flow { opacity: 0; }
+.river.play .rv-flow { animation: fadeIn .6s .8s forwards, flow 2.6s linear infinite; }
+.rv-label { fill: var(--soft); font: 500 12px var(--font); }
+.rv-node-label { fill: var(--gold); font: 800 12px var(--display); letter-spacing: .2em; }
+.rv-node-sub { fill: var(--muted); font: 500 10px var(--font); }
+.rv-ring { transform-box: fill-box; transform-origin: center; opacity: 0; }
+.river.play .rv-ring { animation: ring 2.8s 1s ease-out infinite; }
+
+/* ---------- Invoice flow ---------- */
+.inv-flow { display: grid; gap: 28px; padding: 8px 0; }
+.if-track { position: relative; display: grid; grid-template-columns: repeat(4, 1fr); }
+.if-track::before { content: ''; position: absolute; left: 12.5%; right: 12.5%; top: 7px; height: 2px; background: var(--line); }
+.if-progress { position: absolute; left: 12.5%; top: 7px; height: 2px; width: 0; background: linear-gradient(90deg, var(--gold-dim), var(--gold)); }
+.inv-flow.play .if-progress { animation: progress 8s var(--ease) infinite; }
+.if-stage { display: grid; justify-items: center; gap: 10px; position: relative; }
+.if-dot { width: 16px; height: 16px; border-radius: 50%; background: var(--bg); border: 2px solid var(--line); }
+.inv-flow.play .if-dot { animation: stageDot 8s calc(var(--i) * 1.6s) infinite; }
+.if-name { font-size: 12.5px; color: var(--muted); font-weight: 600; }
+.inv-flow.play .if-name { animation: stageName 8s calc(var(--i) * 1.6s) infinite; }
+.if-doc { position: relative; width: min(340px, 100%); margin-inline: auto; background: #f6f3ec; color: #121820; border-radius: 6px; padding: 18px; box-shadow: 0 30px 80px -20px #000; transform: rotate(-1.5deg); }
+.inv-flow.play .if-doc { animation: docSway 8s ease-in-out infinite; }
+.if-doc .wordmark span { color: #121820; }
+.if-doc-head { display: flex; justify-content: space-between; align-items: center; font: 700 12px var(--display); padding-bottom: 12px; border-bottom: 1px solid #ddd6c6; }
+.if-doc-lines { display: grid; gap: 7px; padding: 12px 0; font-size: 12px; color: #4a535c; }
+.if-doc-lines div { display: flex; justify-content: space-between; }
+.if-doc-total { display: flex; justify-content: space-between; align-items: baseline; border-top: 1.5px solid #121820; padding-top: 10px; font-size: 12px; }
+.if-doc-total b { font: 800 18px var(--display); }
+.if-balance::after { content: '$12,340.50'; }
+.inv-flow.play .if-balance::after { animation: balance 8s steps(1) infinite; }
+.if-stamp { position: absolute; right: 18px; top: 46px; font: 800 18px var(--display); letter-spacing: .2em; color: #2f9b70; border: 2.5px solid #2f9b70; padding: 4px 10px; border-radius: 8px; transform: rotate(-12deg) scale(1.8); opacity: 0; }
+.inv-flow.play .if-stamp { animation: stampLoop 8s infinite; }
+
+/* ---------- Spending lens ---------- */
+.lens { position: relative; display: grid; gap: 12px; padding: 22px; background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-lg); overflow: hidden; }
+.lens-row { display: grid; grid-template-columns: 80px 1fr; align-items: center; gap: 12px; font-size: 12.5px; color: var(--muted); }
+.lens-row div { height: 12px; background: var(--sunken); border-radius: 6px; overflow: hidden; }
+.lens-row i { display: block; height: 100%; width: var(--v); background: #4a5866; border-radius: 6px; transform: scaleX(0); transform-origin: left; }
+.lens-row.hot span { color: var(--text); font-weight: 600; }
+.lens-row.hot i { background: linear-gradient(90deg, var(--gold-dim), var(--gold)); }
+.lens.play .lens-row i { animation: growX .9s calc(var(--i) * 90ms) var(--ease) forwards; }
+.lens-note { margin-top: 6px; justify-self: start; display: grid; gap: 2px; padding: 10px 12px; border: 1px solid #c9a86a55; background: #c9a86a10; border-radius: 6px; font-size: 12px; color: var(--muted); opacity: 0; transform: translateY(6px); }
+.lens-note b { color: var(--gold); font-family: var(--display); }
+.lens.play .lens-note { animation: popIn .6s 1.3s var(--ease) forwards; }
+.lens-glass { position: absolute; width: 70px; height: 70px; border-radius: 50%; border: 2px solid #c9a86a99; box-shadow: 0 0 0 6px #c9a86a12, inset 0 0 20px #c9a86a22; top: 30px; left: 30%; pointer-events: none; opacity: 0; }
+.lens.play .lens-glass { animation: scan 6s 1s ease-in-out infinite; }
+
+/* ---------- Empty art ---------- */
+.empty-art .ea-float { animation: float 5s ease-in-out infinite; }
+.ea-coin { animation: bob 2.6s ease-in-out infinite; }
+.ea-draw { stroke-dasharray: 1; stroke-dashoffset: 1; animation: draw 1.6s .2s var(--ease) forwards; }
+.ea-blink { animation: blink 2s ease-in-out infinite; }
+.ea-spark { transform-box: fill-box; transform-origin: center; animation: twinkle 2.2s ease-in-out infinite; }
+
+/* ---------- Keyframes ---------- */
+@keyframes haIn { to { opacity: 1; transform: none; } }
+@keyframes draw { to { stroke-dashoffset: 0; } }
+@keyframes fadeIn { to { opacity: 1; } }
+@keyframes dash { to { stroke-dashoffset: -22; } }
+@keyframes flow { to { stroke-dashoffset: -64; } }
+@keyframes grow { to { transform: scaleY(1); } }
+@keyframes growX { to { transform: scaleX(1); } }
+@keyframes pulse { 50% { transform: scale(1.5); } }
+@keyframes popIn { from { opacity: 0; transform: translateY(16px) scale(.96); } to { opacity: 1; transform: none; } }
+@keyframes float { 0%, 100% { translate: 0 0; } 50% { translate: 0 -8px; } }
+@keyframes bob { 50% { transform: translateY(-5px); } }
+@keyframes stamp { to { opacity: 1; transform: rotate(-8deg) scale(1); } }
+@keyframes seg1 { to { stroke-dasharray: 44 100; } }
+@keyframes seg2 { to { stroke-dasharray: 26 100; } }
+@keyframes seg3 { to { stroke-dasharray: 18 100; } }
+@keyframes toastLoop { 0% { opacity: 0; transform: translateY(10px); } 8%, 55% { opacity: 1; transform: none; } 63%, 100% { opacity: 0; transform: translateY(-6px); } }
+@keyframes ring { 0% { opacity: .7; transform: scale(1); } 100% { opacity: 0; transform: scale(1.6); } }
+@keyframes progress { 0%, 6% { width: 0; } 26% { width: 25%; } 46% { width: 50%; } 66%, 92% { width: 75%; } 100% { width: 75%; opacity: 0; } }
+@keyframes stageDot { 0%, 4% { border-color: var(--line); background: var(--bg); } 10%, 80% { border-color: var(--gold); background: var(--gold); box-shadow: 0 0 0 5px #c9a86a22; } 92%, 100% { border-color: var(--line); background: var(--bg); box-shadow: none; } }
+@keyframes stageName { 0%, 4% { color: var(--muted); } 10%, 80% { color: var(--text); } 92% { color: var(--muted); } }
+@keyframes docSway { 0%, 100% { transform: rotate(-1.5deg) translateY(0); } 50% { transform: rotate(1deg) translateY(-6px); } }
+@keyframes balance { 0% { content: '$12,340.50'; } 45% { content: '$6,340.50'; } 70% { content: '$0.00'; } }
+@keyframes stampLoop { 0%, 66% { opacity: 0; transform: rotate(-12deg) scale(1.8); } 70%, 92% { opacity: 1; transform: rotate(-12deg) scale(1); } 100% { opacity: 0; } }
+@keyframes scan { 0% { opacity: 0; transform: translate(-40px, 0); } 15% { opacity: 1; } 35%, 70% { opacity: 1; transform: translate(0, 18px); } 85%, 100% { opacity: 0; transform: translate(60px, 60px); } }
+@keyframes blink { 50% { opacity: .35; } }
+@keyframes twinkle { 50% { transform: scale(.7) rotate(45deg); opacity: .6; } }
+
+/* Reduced motion: show the finished composition, no loops. */
+@media (prefers-reduced-motion: reduce) {
+  .rv-band, .rv-flow, .lens-note { opacity: 1 !important; transform: none !important; animation: none !important; }
+  .ea-draw { stroke-dashoffset: 0 !important; animation: none !important; }
+  .lens-row i { transform: none !important; animation: none !important; }
+  .if-stamp { opacity: 1 !important; transform: rotate(-8deg) !important; animation: none !important; }
+  .lens-glass, .rv-ring { display: none; }
+  .if-progress { width: 75% !important; animation: none !important; }
+  .if-dot { border-color: var(--gold) !important; background: var(--gold) !important; animation: none !important; }
+  .if-balance::after { content: '$0.00' !important; animation: none !important; }
+  .empty-art * { animation: none !important; }
+}
+
+/* Phones: two KPIs so figures keep their size. */
+@media (max-width: 760px) {
+  .hero-art { aspect-ratio: 600 / 560; }
+  .ha-kpis > div:nth-child(3) { display: none; }
+  .ha-kpis { grid-template-columns: 1fr 1fr; }
+  .ha-inv { gap: 10px; }
+  .ha-inv-id { display: none; }
+}

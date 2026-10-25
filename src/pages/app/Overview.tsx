@@ -9,9 +9,10 @@ import { formatDate, formatMonth, formatMonthYear, rangeDates, RANGES, type Rang
 import { useApi, useCountUp, useDocumentTitle, useMoney } from '../../lib/hooks';
 
 /** A money figure that counts up to its value (instantly under reduced motion). */
-function Figure({ value, className = '' }: { value: number; className?: string }) {
+function Figure({ value, className = '' }: { value: number | null; className?: string }) {
   const money = useMoney();
-  const shown = useCountUp(value);
+  const shown = useCountUp(value ?? 0);
+  if (value === null) return <span className={`figure num muted ${className}`}>Unavailable</span>;
   return <span className={`figure num ${value < 0 ? 'neg' : ''} ${className}`} title={money(value)}>{money(shown)}</span>;
 }
 
@@ -21,8 +22,8 @@ export default function Overview() {
   const money = useMoney();
   const [range, setRange] = useState<RangeKey>('month');
   const { from, to } = rangeDates(range);
-  const balanceAgeDays = business?.openingBalanceDate ? Math.max(0, Math.floor((Date.parse(`${new Date().toISOString().slice(0, 10)}T00:00:00Z`) - Date.parse(`${business.openingBalanceDate}T00:00:00Z`)) / 86400000)) : null;
   const { data, error, loading, reload } = useApi<OverviewData>(`/overview?from=${from}&to=${to}`);
+  const balanceAgeDays = data?.cashDetails.asOf ? Math.max(0, Math.floor((Date.parse(`${new Date().toISOString().slice(0, 10)}T00:00:00Z`) - Date.parse(`${data.cashDetails.asOf}T00:00:00Z`)) / 86400000)) : null;
   const rangeLabel = RANGES.find((r) => r.key === range)!.label.toLowerCase();
 
   const [params] = useSearchParams();
@@ -49,7 +50,7 @@ export default function Overview() {
       {data && (
         <>
           {data.counts.unclassified > 0 && <div className="callout info" style={{ marginBottom: 18 }}><Icon name="alert" size={16} /><span>{data.counts.unclassified} imported bank movement{data.counts.unclassified === 1 ? '' : 's'} still need financial classification. They affect recorded cash, but stay out of income and expense reports until reviewed.</span><Link className="link" to="/app/transactions">Review transactions <Icon name="arrowRight" size={14} /></Link></div>}
-          {data.hasOpeningBalance && balanceAgeDays !== null && balanceAgeDays > 30 && <div className="callout info" style={{ marginBottom: 18 }}><Icon name="calendar" size={16} /><span>Your cash starting balance was last entered {balanceAgeDays} days ago ({formatDate(business!.openingBalanceDate!)}). Update it if the accounts have changed since then.</span></div>}
+          {data.hasOpeningBalance && balanceAgeDays !== null && balanceAgeDays > 30 && <div className="callout info" style={{ marginBottom: 18 }}><Icon name="calendar" size={16} /><span>The latest recorded cash source is {balanceAgeDays} days old ({formatDate(data.cashDetails.asOf!)}). Import newer statements to update the view.</span></div>}
           {steps.some((s) => !s.done) && (
             <section className="panel onboard">
               <div>
@@ -72,12 +73,11 @@ export default function Overview() {
             <div className="ov-cash">
               <span className="folio">Cash on hand <b>recorded</b></span>
               <Figure className="ov-cash-figure" value={data.cash} />
-              <p className="ov-cash-note">{data.hasOpeningBalance ? 'Opening balance plus every recorded transaction — month-end history below.' : <>No opening balance yet — <Link className="link" to="/app/settings#business">set it</Link> so this matches your bank.</>}</p>
-              {data.hasOpeningBalance && <div className="account-summary"><span className="eyebrow">MANUALLY ENTERED · AS OF {formatDate(business?.openingBalanceDate || '')}</span>{business?.cashAccounts?.length ? business.cashAccounts.map((a) => <div key={a.id}><span>{a.name}<small>{a.type} · {a.currency}</small></span><b className="num">{money(a.balanceCents)}</b></div>) : <div><span>Business cash balance<small>Opening estimate · {business?.currency}</small></span><b className="num">{money(business?.openingBalanceCents || 0)}</b></div>}</div>}
+              <p className="ov-cash-note">{data.hasOpeningBalance ? `Calculated from ${data.cashDetails.source === 'statement' ? 'statement balances' : data.cashDetails.source === 'opening-balance' ? 'dated opening balances' : 'active account balances'} and later recorded activity · as of ${data.cashDetails.asOf ? formatDate(data.cashDetails.asOf) : '—'}. Historical, not live.` : data.cashDetails.missingAccounts.length ? `A total is unavailable because these accounts have no dated balance: ${data.cashDetails.missingAccounts.join(', ')}. Known balances: ${data.cashDetails.knownBalanceCents === null ? '—' : money(data.cashDetails.knownBalanceCents)}.` : <>Cash total unavailable. <Link className="link" to="/app/settings#business">Set a dated opening balance</Link> or import a statement with its closing balance.</>}</p>
               <div className="ov-cash-chart">
-                <LineChart ariaLabel="Recorded month-end cash balance" labels={data.balanceHistory.map((b) => formatMonth(b.month))}
+                {data.balanceHistory.some((b) => b.balance !== null) ? <LineChart ariaLabel="Recorded month-end cash balance" labels={data.balanceHistory.map((b) => formatMonth(b.month))}
                   series={[{ key: 'bal', label: 'Recorded month-end balance', color: '#c9a86a', area: true, values: data.balanceHistory.map((b) => b.balance) }]}
-                  format={(v) => money(v, { compact: true })} height={170} />
+                  format={(v) => money(v, { compact: true })} height={170} /> : <EmptyState kind="chart" title="No dated balance history yet">An opening balance or statement close gives Morgan a starting point for a historical balance view.</EmptyState>}
               </div>
             </div>
             <dl className="ov-ledger">

@@ -34,7 +34,8 @@ export function priorPeriod(from, to) {
 }
 
 export function cashBalance(txns, business, asOf) {
-  const start = business.openingBalanceDate || '0000-01-01';
+  if (!business.openingBalanceDate || business.openingBalanceDate > asOf) return null;
+  const start = business.openingBalanceDate;
   return (business.openingBalanceCents || 0) +
     txns.filter((t) => t.date >= start && t.date <= asOf).reduce((s, t) => s + t.amountCents, 0);
 }
@@ -247,8 +248,8 @@ const recurrenceNext = (iso, cadence) => {
   return d.toISOString().slice(0, 10);
 };
 
-export function cashflow({ txns, invoices, bills, plannedItems = [], business, today, weeks = 13 }) {
-  const opening = cashBalance(txns, business, today);
+export function cashflow({ txns, invoices, bills, plannedItems = [], business, today, weeks = 13, startingCash }) {
+  const opening = startingCash === undefined ? cashBalance(txns, business, today) : startingCash;
   const horizonEnd = addDays(today, weeks * 7 - 1);
   const rows = Array.from({ length: weeks }, (_, i) => ({
     week: i, start: addDays(today, i * 7), end: addDays(today, i * 7 + 6), inflows: 0, outflows: 0, items: [],
@@ -294,7 +295,7 @@ export function cashflow({ txns, invoices, bills, plannedItems = [], business, t
   const firstTxn = txns.reduce((m, t) => (t.date < m ? t.date : m), today);
   const historyDays = Math.min(90, daysBetween(firstTxn, today) + 1);
   const runRateWeekly = historyDays >= 28 ? Math.round(hist.reduce((s, t) => s + t.amountCents, 0) / historyDays * 7) : null;
-  return { opening, today, hasOpeningBalance: Boolean(business.openingBalanceDate), weeks: rows, runRateWeekly, historyDays, overdueIn, overdueOut };
+  return { opening, today, hasOpeningBalance: opening !== null, weeks: rows, runRateWeekly, historyDays, overdueIn, overdueOut };
 }
 
 export function profitAndLoss(txns, year) {

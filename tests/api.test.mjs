@@ -33,6 +33,7 @@ function agent() {
 }
 
 const reg = (a, email, extra = {}) => a.call('POST', '/auth/register', { name: 'Owner', email, password: 'correct horse 42', businessName: 'Biz ' + email, ...extra });
+const statementFile = Buffer.from('Date,Description,Amount\n2026-10-01,Sample row,1.00').toString('base64');
 
 test('registration validates input and rejects duplicates', async () => {
   const a = agent();
@@ -164,7 +165,7 @@ test('full invoice workflow with exact money math, PDF and payments', async () =
 
   const sent = await a.call('POST', `/invoices/${id}/mark-sent`);
   assert.equal(sent.body.displayStatus, 'overdue'); // due 2026-10-15 is in the past relative to test clock? only if today > due
-  assert.equal((await a.call('GET', '/overview')).body.cash, 0, 'sent invoice is a receivable, not cash');
+  assert.equal((await a.call('GET', '/overview')).body.cash, null, 'without a dated balance point, an invoice cannot establish available cash');
   const pdf = await a.call('GET', `/invoices/${id}/pdf`);
   assert.equal(pdf.headers.get('content-type'), 'application/pdf');
   assert.equal(pdf.body.subarray(0, 5).toString(), '%PDF-');
@@ -179,11 +180,11 @@ test('full invoice workflow with exact money math, PDF and payments', async () =
   const p1 = await a.call('POST', `/invoices/${id}/payments`, { amount: '10.00', date: '2026-10-20' });
   assert.equal(p1.body.balanceDue, 1165);
   assert.equal(p1.body.displayStatus, 'overdue');
-  assert.equal((await a.call('GET', '/overview')).body.cash, 1000, 'only recorded invoice payment increases cash');
+  assert.equal((await a.call('GET', '/overview')).body.cash, null, 'payment movement does not invent the starting cash balance');
   const p2 = await a.call('POST', `/invoices/${id}/payments`, { amountCents: 1165, date: '2026-10-21' });
   assert.equal(p2.body.status, 'paid');
   assert.equal(p2.body.balanceDue, 0);
-  assert.equal((await a.call('GET', '/overview')).body.cash, 2165);
+  assert.equal((await a.call('GET', '/overview')).body.cash, null);
 
   const txns = await a.call('GET', '/transactions');
   assert.equal(txns.body.total, 2);
@@ -223,14 +224,17 @@ test('business data is strictly isolated between accounts', async () => {
 test('bank accounts isolate data and statement imports are reviewed, persistent and deduplicated', async () => {
   const a = agent(), b = agent();
   await reg(a, 'bank-a@example.com'); await reg(b, 'bank-b@example.com');
-  const created = await a.call('POST', '/bank-accounts', { institution: 'North Bank', name: 'Operating', type: 'checking', currency: 'USD', accountNumber: '001234', openingBalanceCents: 100000, openingBalanceDate: '2026-10-01' });
+  const created = await a.call('POST', '/bank-accounts', { institution: 'North Bank', name: 'Operating', type: 'checking', currency: 'USD', accountNumber: '001234', openingBalanceCents: 100000, openingBalanceDate: '2026-09-01' });
   assert.equal(created.status, 201); assert.equal(created.body.maskedIdentifier, '•••• 1234'); assert.equal('accountNumber' in created.body, false);
-  const rows = [{ date: '2026-10-12', description: 'Studio rent', vendor: 'Studio', amountCents: -25000, currency: 'USD', reference: 'R-12', runningBalanceCents: 75000 }];
-  const preview = await a.call('POST', '/bank-statements/preview', { accountId: created.body.id, openingBalanceCents: 100000, closingBalanceCents: 75000, rows });
+  const rows = [{ date: '2026-09-12', description: 'Studio rent', vendor: 'Studio', amountCents: -25000, currency: 'USD', reference: 'R-12', runningBalanceCents: 75000 }];
+  const preview = await a.call('POST', '/bank-statements/preview', { accountId: created.body.id, statementPeriodStart: '2026-09-01', statementPeriodEnd: '2026-09-30', openingBalanceCents: 100000, closingBalanceCents: 75000, rows });
   assert.equal(preview.status, 200); assert.equal(preview.body.summary.discrepancyCents, 0); assert.equal(preview.body.rows[0].duplicate, false);
-  const imported = await a.call('POST', '/bank-statements/import', { accountId: created.body.id, filename: 'october.csv', openingBalanceCents: 100000, closingBalanceCents: 75000, rows });
+  const invalidFile = await a.call('POST', '/bank-statements/import', { accountId: created.body.id, filename: 'statement.pdf', sourceFileBase64: statementFile, rows });
+  assert.equal(invalidFile.status, 400, 'file contents must match their extension before anything is persisted');
+  assert.equal(await db.collection('statementImports').countDocuments({ filename: 'statement.pdf' }), 0);
+  const imported = await a.call('POST', '/bank-statements/import', { accountId: created.body.id, filename: 'october.csv', sourceFileBase64: statementFile, statementPeriodStart: '2026-09-01', statementPeriodEnd: '2026-09-30', openingBalanceCents: 100000, closingBalanceCents: 75000, rows });
   assert.equal(imported.status, 201); assert.equal(imported.body.imported, 1);
-  const repeat = await a.call('POST', '/bank-statements/import', { accountId: created.body.id, filename: 'different-name.csv', openingBalanceCents: 100000, closingBalanceCents: 75000, rows });
+  const repeat = await a.call('POST', '/bank-statements/import', { accountId: created.body.id, filename: 'different-name.csv', sourceFileBase64: statementFile, statementPeriodStart: '2026-09-01', statementPeriodEnd: '2026-09-30', openingBalanceCents: 100000, closingBalanceCents: 75000, rows });
   assert.equal(repeat.status, 201); assert.equal(repeat.body.imported, 0); assert.equal(repeat.body.duplicates, 1);
   const txns = await a.call('GET', '/transactions'); assert.equal(txns.body.total, 1); assert.equal(txns.body.items[0].source, 'bank-statement');
   assert.equal(txns.body.income, 0); assert.equal(txns.body.expenses, 0); assert.equal(txns.body.unclassified, 1);
@@ -239,11 +243,24 @@ test('bank accounts isolate data and statement imports are reviewed, persistent 
   assert.equal(classified.body.expenses, 25000); assert.equal(classified.body.unclassified, 0);
   assert.equal((await a.call('GET', '/reports/pnl?year=2026')).body.expenses[0].total, 25000);
   const accounts = await a.call('GET', '/bank-accounts'); assert.equal(accounts.body[0].calculatedBalanceCents, 75000); assert.equal(accounts.body[0].latestImport.duplicateCount, 1);
+  const storedStatement = await db.collection('statementImports').findOne({ businessId: (await db.collection('users').findOne({ email: 'bank-a@example.com' })).businessId, filename: 'october.csv' });
+  assert.deepEqual(Buffer.from(storedStatement.sourceFile.buffer), Buffer.from(statementFile, 'base64'));
+  assert.equal(storedStatement.sourceFileSha256.length, 64);
+  const imports = await a.call('GET', `/bank-accounts/${created.body.id}/imports`);
+  assert.equal(imports.body.find((x) => x.filename === 'october.csv').sourceFileStored, true);
+  assert.equal('sourceFile' in imports.body.find((x) => x.filename === 'october.csv'), false);
+  const coverage = await a.call('GET', '/reports/coverage?year=2026');
+  assert.equal(coverage.body.months.find((m) => m.month === '2026-09').accounts[0].status, 'complete');
+  assert.equal((await a.call('GET', '/overview')).body.cash, 75000, 'statement closing balance anchors consolidated cash');
+  assert.equal((await b.call('GET', '/reports/coverage?year=2026')).body.accounts.length, 0);
   const withoutBaseline = await a.call('POST', '/bank-accounts', { institution: 'North Bank', name: 'No opening point', type: 'checking', currency: 'USD' });
   assert.equal((await a.call('GET', '/bank-accounts')).body.find((item) => item.id === withoutBaseline.body.id).calculatedBalanceCents, null, 'transaction movement alone is not presented as an account balance');
+  const partialCash = await a.call('GET', '/overview');
+  assert.equal(partialCash.body.cash, null, 'a partial set of account balances is not presented as the total available cash');
+  assert.deepEqual(partialCash.body.cashDetails.missingAccounts, ['No opening point']);
   assert.equal((await b.call('PATCH', `/bank-transactions/${txns.body.items[0].id}/classification`, { financialClass: 'expense', category: 'Rent' })).status, 404);
   const refund = { date: '2026-10-14', description: 'Studio rent refund', vendor: 'Studio', amountCents: 5000, currency: 'USD', reference: 'R-REFUND' };
-  await a.call('POST', '/bank-statements/import', { accountId: created.body.id, filename: 'refund.csv', rows: [refund] });
+  await a.call('POST', '/bank-statements/import', { accountId: created.body.id, filename: 'refund.csv', sourceFileBase64: statementFile, rows: [refund] });
   const refundTxn = (await a.call('GET', '/transactions')).body.items.find((t) => t.description === refund.description);
   assert.equal((await a.call('PATCH', `/bank-transactions/${refundTxn.id}/classification`, { financialClass: 'refund', category: 'Rent' })).status, 200);
   assert.equal((await a.call('GET', '/transactions')).body.expenses, 20000);
@@ -262,7 +279,7 @@ test('statement reconciliation handles partial invoice payments, bills, existing
   const invoice = await a.call('POST', '/invoices', { customerId: customer.body.id, issueDate: '2026-10-01', dueDate: '2026-11-15', items: [{ description: 'Services', quantity: 1, unitCents: 10000 }] });
   await a.call('POST', `/invoices/${invoice.body.id}/mark-sent`);
   const account = await a.call('POST', '/bank-accounts', { institution: 'North Bank', name: 'Operating', type: 'checking', currency: 'USD' });
-  const importOne = (rows, filename, accountId = account.body.id) => a.call('POST', '/bank-statements/import', { accountId, filename, rows });
+  const importOne = (rows, filename, accountId = account.body.id) => a.call('POST', '/bank-statements/import', { accountId, filename, sourceFileBase64: statementFile, rows });
   const first = { date: '2026-10-22', description: 'Cedar Client payment', vendor: 'Cedar Client', amountCents: 4000, currency: 'USD', reference: 'PAY-1' };
   assert.equal((await importOne([first], 'first.csv')).status, 201);
   const available = await a.call('GET', `/bank-accounts/${account.body.id}/transactions`);

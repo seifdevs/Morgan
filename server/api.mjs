@@ -58,6 +58,9 @@ const dec = (req, inv) => decorateInvoice(inv, req.today);
 export function createApi(db, { secureCookies }) {
   const r = express.Router();
   const C = (n) => db.collection(n);
+  // Base64 expands a 10 MB statement to roughly 13.4 MB. Keep the larger bound
+  // scoped to the authenticated statement import endpoint.
+  r.use('/bank-statements/import', express.json({ limit: '17mb' }));
   r.use(express.json({ limit: '2mb' }));
 
   // CSRF defence: state-changing requests must carry a custom header, which cross-site forms cannot set
@@ -401,23 +404,30 @@ export function createApi(db, { secureCookies }) {
   };
   const dateWithin = (a, b, days) => Math.abs((Date.parse(a) - Date.parse(b)) / 86400000) <= days;
   const sameParty = (a, b) => !a || !b || a.toLowerCase().includes(b.toLowerCase()) || b.toLowerCase().includes(a.toLowerCase());
+  const calculateAccountBalance = (account, records, statements, asOf) => {
+    const statement = statements.find((item) => item.closingBalanceCents !== null && item.periodEnd <= asOf);
+    const openingIsCurrent = account.openingBalanceCents !== null && account.openingBalanceCents !== undefined && account.openingBalanceDate && account.openingBalanceDate <= asOf;
+    const statementIsCurrent = statement && (!openingIsCurrent || statement.periodEnd >= account.openingBalanceDate);
+    const baseCents = statementIsCurrent ? statement.closingBalanceCents : openingIsCurrent ? account.openingBalanceCents : null;
+    const baseDate = statementIsCurrent ? statement.periodEnd : openingIsCurrent ? account.openingBalanceDate : null;
+    const latestDate = records.filter((item) => item.date <= asOf).reduce((latest, item) => item.date > latest ? item.date : latest, '');
+    if (baseCents === null || !baseDate) return { balance: null, latestDate: latestDate || null, balanceSource: null, balanceAsOf: null };
+    const later = records.filter((item) => item.date > baseDate && item.date <= asOf);
+    const balance = later.reduce((sum, item) => sum + item.amountCents, baseCents);
+    const balanceAsOf = later.reduce((latest, item) => item.date > latest ? item.date : latest, baseDate);
+    return { balance, latestDate: latestDate || baseDate, balanceSource: statementIsCurrent ? 'statement' : 'opening-balance', balanceAsOf };
+  };
   r.get('/bank-accounts', wrap(async (req, res) => {
     const accounts = await C('bankAccounts').find(scoped(req)).sort({ status: 1, name: 1 }).toArray();
     const ids = accounts.map((a) => a._id);
     const [imports, balances] = await Promise.all([
-      C('statementImports').find(scoped(req, { accountId: { $in: ids } })).sort({ importedAt: -1 }).toArray(),
+      C('statementImports').find(scoped(req, { accountId: { $in: ids } }), { projection: { sourceFile: 0 } }).sort({ importedAt: -1 }).toArray(),
       Promise.all(accounts.map(async (a) => {
         const [records, accountImports] = await Promise.all([
           C('transactions').find(scoped(req, { accountId: a._id })).toArray(),
-          C('statementImports').find(scoped(req, { accountId: a._id, closingBalanceCents: { $ne: null } })).sort({ periodEnd: -1, importedAt: -1 }).limit(1).toArray(),
+          C('statementImports').find(scoped(req, { accountId: a._id, closingBalanceCents: { $ne: null } }), { projection: { sourceFile: 0 } }).sort({ periodEnd: -1, importedAt: -1 }).toArray(),
         ]);
-        const statement = accountImports[0];
-        const baselineCents = statement?.closingBalanceCents ?? a.openingBalanceCents;
-        const baselineDate = statement?.periodEnd ?? a.openingBalanceDate;
-        const latestDate = records.reduce((latest, t) => t.date > latest ? t.date : latest, '');
-        if (baselineCents === null || baselineCents === undefined || !baselineDate) return { _id: a._id, balance: null, latestDate: latestDate || null, balanceSource: null, balanceAsOf: null };
-        const movement = records.filter((t) => t.date > baselineDate).reduce((sum, t) => sum + t.amountCents, 0);
-        return { _id: a._id, balance: baselineCents + movement, latestDate: latestDate || baselineDate, balanceSource: statement ? 'statement' : 'opening-balance', balanceAsOf: latestDate > baselineDate ? latestDate : baselineDate };
+        return { _id: a._id, ...calculateAccountBalance(a, records, accountImports, req.today) };
       })),
     ]);
     const importByAccount = new Map();
@@ -425,7 +435,7 @@ export function createApi(db, { secureCookies }) {
     const balanceByAccount = new Map(balances.map((b) => [String(b._id), b]));
     res.json(accounts.map((a) => {
       const latest = importByAccount.get(String(a._id)), calc = balanceByAccount.get(String(a._id));
-      return { ...publicBankAccount(a), latestImport: latest ? { id: String(latest._id), filename: latest.filename, importedAt: latest.importedAt, periodStart: latest.periodStart, periodEnd: latest.periodEnd, closingBalanceCents: latest.closingBalanceCents, importedCount: latest.importedCount, duplicateCount: latest.duplicateCount, discrepancyCents: latest.discrepancyCents } : null, calculatedBalanceCents: calc?.balance ?? null, balanceSource: calc?.balanceSource ?? null, balanceAsOf: calc?.balanceAsOf ?? null, latestTransactionDate: calc?.latestDate ?? null };
+      return { ...publicBankAccount(a), latestImport: latest ? { id: String(latest._id), filename: latest.filename, fileType: latest.fileType || 'csv', importedAt: latest.importedAt, periodStart: latest.periodStart, periodEnd: latest.periodEnd, closingBalanceCents: latest.closingBalanceCents, importedCount: latest.importedCount, duplicateCount: latest.duplicateCount, discrepancyCents: latest.discrepancyCents } : null, calculatedBalanceCents: calc?.balance ?? null, balanceSource: calc?.balanceSource ?? null, balanceAsOf: calc?.balanceAsOf ?? null, latestTransactionDate: calc?.latestDate ?? null };
     }));
   }));
   r.post('/bank-accounts', wrap(async (req, res) => {
@@ -469,8 +479,11 @@ export function createApi(db, { secureCookies }) {
   r.get('/bank-accounts/:id/imports', wrap(async (req, res) => {
     const accountId = oid(req.params.id);
     if (!await C('bankAccounts').findOne(scoped(req, { _id: accountId }))) throw new HttpError(404, 'Bank account not found');
-    const imports = await C('statementImports').find(scoped(req, { accountId })).sort({ importedAt: -1 }).limit(100).toArray();
-    res.json(imports.map((i) => { const { _id, businessId, accountId: _account, ...rest } = i; return { id: String(_id), ...rest }; }));
+    const imports = await C('statementImports').find(scoped(req, { accountId }), { projection: { sourceFile: 0 } }).sort({ importedAt: -1 }).limit(100).toArray();
+    res.json(imports.map((i) => {
+      const { _id, businessId, accountId: _account, sourceFile: _sourceFile, ...rest } = i;
+      return { id: String(_id), ...rest, sourceFileStored: Boolean(i.sourceFileSha256) };
+    }));
   }));
   r.get('/bank-accounts/:id/transactions', wrap(async (req, res) => {
     const accountId = oid(req.params.id);
@@ -560,7 +573,7 @@ export function createApi(db, { secureCookies }) {
       if (currency !== account.currency) throw bad(`Row ${i + 1} currency (${currency}) does not match the selected account (${account.currency})`);
       const reference = str(row.reference, `Row ${i + 1} reference`, { max: 120 });
       const fingerprint = createHash('sha256').update([String(account._id), dateValue, currency, reference ? `ref:${reference.toLowerCase()}` : `${amountCents}:${description.toLowerCase().replace(/\s+/g, ' ').trim()}`].join('|')).digest('hex');
-      return { date: dateValue, description, amountCents, currency, reference, runningBalanceCents: row.runningBalanceCents === null || row.runningBalanceCents === undefined || row.runningBalanceCents === '' ? null : cents(row.runningBalanceCents, `Row ${i + 1} balance`), vendor: str(row.vendor, `Row ${i + 1} vendor`, { max: 120 }), category: str(row.category, `Row ${i + 1} category`, { max: 60 }) || 'Uncategorized', financialClass: 'unclassified', fingerprint };
+      return { date: dateValue, description, amountCents, currency, reference, runningBalanceCents: row.runningBalanceCents === null || row.runningBalanceCents === undefined || row.runningBalanceCents === '' ? null : cents(row.runningBalanceCents, `Row ${i + 1} balance`), vendor: str(row.vendor, `Row ${i + 1} vendor`, { max: 120 }), category: str(row.category, `Row ${i + 1} category`, { max: 60 }) || 'Uncategorized', sourceRowNumber: int(row.sourceRowNumber ?? i + 2, `Row ${i + 1} source row`, { min: 1, max: 5001 }), financialClass: 'unclassified', fingerprint };
     });
   };
   const findStatementAccount = async (req) => {
@@ -586,7 +599,12 @@ export function createApi(db, { secureCookies }) {
     const closingBalanceCents = req.body.closingBalanceCents === '' || req.body.closingBalanceCents === undefined || req.body.closingBalanceCents === null ? null : cents(req.body.closingBalanceCents, 'Statement closing balance');
     const sum = rows.reduce((s, row) => s + row.amountCents, 0);
     const expected = openingBalanceCents === null ? null : openingBalanceCents + sum;
-    return { rows: review, summary: { count: rows.length, duplicates: review.filter((r) => r.duplicate).length, creditsCents: rows.reduce((s, r) => s + Math.max(0, r.amountCents), 0), debitsCents: rows.reduce((s, r) => s + Math.max(0, -r.amountCents), 0), periodStart: rows.reduce((a, r) => r.date < a ? r.date : a, rows[0].date), periodEnd: rows.reduce((a, r) => r.date > a ? r.date : a, rows[0].date), openingBalanceCents, closingBalanceCents, calculatedClosingBalanceCents: expected, discrepancyCents: expected === null || closingBalanceCents === null ? null : closingBalanceCents - expected } };
+    const rowStart = rows.reduce((a, r) => r.date < a ? r.date : a, rows[0].date), rowEnd = rows.reduce((a, r) => r.date > a ? r.date : a, rows[0].date);
+    const periodStart = req.body.statementPeriodStart ? date(req.body.statementPeriodStart, 'Statement period start') : rowStart;
+    const periodEnd = req.body.statementPeriodEnd ? date(req.body.statementPeriodEnd, 'Statement period end') : rowEnd;
+    if (periodStart > rowStart || periodEnd < rowEnd || periodStart > periodEnd) throw bad('Statement period must include every imported transaction date.');
+    if (periodEnd > req.today) throw bad('Statement period end cannot be in the future.');
+    return { rows: review, summary: { count: rows.length, duplicates: review.filter((r) => r.duplicate).length, creditsCents: rows.reduce((s, r) => s + Math.max(0, r.amountCents), 0), debitsCents: rows.reduce((s, r) => s + Math.max(0, -r.amountCents), 0), periodStart, periodEnd, openingBalanceCents, closingBalanceCents, calculatedClosingBalanceCents: expected, discrepancyCents: expected === null || closingBalanceCents === null ? null : closingBalanceCents - expected } };
   };
   r.post('/bank-statements/preview', wrap(async (req, res) => {
     const account = await findStatementAccount(req);
@@ -595,8 +613,21 @@ export function createApi(db, { secureCookies }) {
   r.post('/bank-statements/import', wrap(async (req, res) => {
     const account = await findStatementAccount(req), review = await getStatementReview(req, account);
     const importId = new ObjectId(), importedAt = new Date();
+    const filename = str(req.body.filename || 'Statement.csv', 'Filename', { required: true, max: 180 });
+    const fileType = oneOf(filename.split('.').at(-1)?.toLowerCase(), 'File type', ['csv', 'xlsx', 'pdf']);
+    const encodedFile = req.body.sourceFileBase64;
+    let sourceFile = null, sourceFileSha256 = null;
+    if (typeof encodedFile !== 'string' || !encodedFile.length) throw bad('The original statement file is required to complete the import.');
+    if (!/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(encodedFile)) throw bad('The statement file could not be read. Choose it again and retry.');
+    sourceFile = Buffer.from(encodedFile, 'base64');
+    if (!sourceFile.length || sourceFile.length > 10 * 1024 * 1024) throw bad('Statement files must be 10 MB or smaller.');
+    const isPdf = sourceFile.subarray(0, 1024).includes(Buffer.from('%PDF-'));
+    const isXlsx = sourceFile.subarray(0, 4).equals(Buffer.from([0x50, 0x4b, 0x03, 0x04]));
+    const isCsv = !sourceFile.includes(0) && !sourceFile.subarray(0, 1024).includes(Buffer.from('%PDF-'));
+    if ((fileType === 'pdf' && !isPdf) || (fileType === 'xlsx' && !isXlsx) || (fileType === 'csv' && !isCsv)) throw bad('The file contents do not match the selected file type.');
+    sourceFileSha256 = createHash('sha256').update(sourceFile).digest('hex');
     const rows = review.rows.filter((r) => !r.duplicate && req.body.rows.find((input) => input.date === r.date && Number(input.amountCents) === r.amountCents && input.description === r.description && input.include !== false));
-    const docs = rows.map((row) => ({ businessId: req.businessId, accountId: account._id, date: row.date, description: row.description, vendor: row.vendor, category: row.category, financialClass: row.financialClass, amountCents: row.amountCents, currency: row.currency, reference: row.reference, runningBalanceCents: row.runningBalanceCents, source: 'bank-statement', importId, fingerprint: row.fingerprint, reconciliationStatus: 'unmatched', createdAt: importedAt, updatedAt: importedAt }));
+    const docs = rows.map((row) => ({ businessId: req.businessId, accountId: account._id, date: row.date, description: row.description, vendor: row.vendor, category: row.category, financialClass: row.financialClass, amountCents: row.amountCents, currency: row.currency, reference: row.reference, runningBalanceCents: row.runningBalanceCents, sourceRowNumber: row.sourceRowNumber, source: 'bank-statement', importId, fingerprint: row.fingerprint, reconciliationStatus: 'unmatched', createdAt: importedAt, updatedAt: importedAt }));
     const session = db.client?.startSession?.();
     let transactionalImport = false;
     try {
@@ -605,11 +636,11 @@ export function createApi(db, { secureCookies }) {
         transactionalImport = true;
         await session.withTransaction(async () => {
           if (docs.length) await C('transactions').insertMany(docs, { session });
-          await C('statementImports').insertOne({ _id: importId, businessId: req.businessId, accountId: account._id, filename: str(req.body.filename || 'Statement.csv', 'Filename', { required: true, max: 180 }), fileType: 'csv', importedAt, status: 'complete', periodStart: review.summary.periodStart, periodEnd: review.summary.periodEnd, openingBalanceCents: review.summary.openingBalanceCents, closingBalanceCents: review.summary.closingBalanceCents, calculatedClosingBalanceCents: review.summary.calculatedClosingBalanceCents, discrepancyCents: review.summary.discrepancyCents, transactionCount: review.summary.count, importedCount: docs.length, duplicateCount: review.summary.duplicates, creditsCents: review.summary.creditsCents, debitsCents: review.summary.debitsCents }, { session });
+          await C('statementImports').insertOne({ _id: importId, businessId: req.businessId, accountId: account._id, filename, fileType, sourceFile, sourceFileSha256, importedAt, status: 'complete', periodStart: review.summary.periodStart, periodEnd: review.summary.periodEnd, openingBalanceCents: review.summary.openingBalanceCents, closingBalanceCents: review.summary.closingBalanceCents, calculatedClosingBalanceCents: review.summary.calculatedClosingBalanceCents, discrepancyCents: review.summary.discrepancyCents, transactionCount: review.summary.count, importedCount: docs.length, duplicateCount: review.summary.duplicates, creditsCents: review.summary.creditsCents, debitsCents: review.summary.debitsCents }, { session });
         });
       } else {
         if (docs.length) await C('transactions').insertMany(docs, { ordered: true });
-        await C('statementImports').insertOne({ _id: importId, businessId: req.businessId, accountId: account._id, filename: str(req.body.filename || 'Statement.csv', 'Filename', { required: true, max: 180 }), fileType: 'csv', importedAt, status: 'complete', periodStart: review.summary.periodStart, periodEnd: review.summary.periodEnd, openingBalanceCents: review.summary.openingBalanceCents, closingBalanceCents: review.summary.closingBalanceCents, calculatedClosingBalanceCents: review.summary.calculatedClosingBalanceCents, discrepancyCents: review.summary.discrepancyCents, transactionCount: review.summary.count, importedCount: docs.length, duplicateCount: review.summary.duplicates, creditsCents: review.summary.creditsCents, debitsCents: review.summary.debitsCents });
+        await C('statementImports').insertOne({ _id: importId, businessId: req.businessId, accountId: account._id, filename, fileType, sourceFile, sourceFileSha256, importedAt, status: 'complete', periodStart: review.summary.periodStart, periodEnd: review.summary.periodEnd, openingBalanceCents: review.summary.openingBalanceCents, closingBalanceCents: review.summary.closingBalanceCents, calculatedClosingBalanceCents: review.summary.calculatedClosingBalanceCents, discrepancyCents: review.summary.discrepancyCents, transactionCount: review.summary.count, importedCount: docs.length, duplicateCount: review.summary.duplicates, creditsCents: review.summary.creditsCents, debitsCents: review.summary.debitsCents });
       }
     } catch (e) {
       if (!transactionalImport) {
@@ -941,6 +972,37 @@ export function createApi(db, { secureCookies }) {
     ]);
     return { txns, invoices: invoices.map((i) => decorateInvoice(i, now)), bills: bills.map(decorateBill), biz, now };
   };
+  const loadCashContext = async (req, biz, txns) => {
+    const accounts = (await C('bankAccounts').find(scoped(req, { status: 'active', currency: biz.currency, type: { $ne: 'credit-card' } })).toArray());
+    const sources = await Promise.all(accounts.map(async (account) => {
+      const [records, statements] = await Promise.all([
+        C('transactions').find(scoped(req, { accountId: account._id })).toArray(),
+        C('statementImports').find(scoped(req, { accountId: account._id, closingBalanceCents: { $ne: null } }), { projection: { sourceFile: 0 } }).sort({ periodEnd: -1, importedAt: -1 }).toArray(),
+      ]);
+      return { account, records, statements };
+    }));
+    const positionAt = (asOf) => {
+      if (sources.length) {
+        const parts = sources.map(({ account, records, statements }) => {
+          const calculation = calculateAccountBalance(account, records, statements, asOf);
+          return { account, balance: calculation.balance, asOf: calculation.balanceAsOf, source: calculation.balanceSource };
+        });
+        const missingAccounts = parts.filter((part) => part.balance === null).map((part) => part.account.name);
+        const knownParts = parts.filter((part) => part.balance !== null);
+        const knownBalance = knownParts.length ? knownParts.reduce((sum, part) => sum + part.balance, 0) : null;
+        const complete = missingAccounts.length === 0;
+        const sourceKinds = [...new Set(parts.map((part) => part.source).filter(Boolean))];
+        const asOfDate = complete ? parts.reduce((oldest, part) => part.asOf < oldest ? part.asOf : oldest, asOf) : null;
+        return { balance: complete ? knownBalance : null, knownBalance, missingAccounts, asOf: asOfDate, source: complete ? (sourceKinds.length === 1 ? sourceKinds[0] : 'bank-accounts') : null };
+      }
+      const manualTxns = txns.filter((item) => !item.accountId);
+      const balance = A.cashBalance(manualTxns, biz, asOf);
+      if (balance === null) return { balance: null, knownBalance: null, missingAccounts: [], asOf: null, source: null };
+      const lastActivity = manualTxns.reduce((latest, item) => item.date >= biz.openingBalanceDate && item.date <= asOf && item.date > latest ? item.date : latest, biz.openingBalanceDate);
+      return { balance, knownBalance: balance, missingAccounts: [], asOf: lastActivity, source: 'opening-balance' };
+    };
+    return { positionAt };
+  };
   const range = (req, now) => {
     const to = req.query.to ? date(req.query.to, 'To') : now;
     const from = req.query.from ? date(req.query.from, 'From') : `${now.slice(0, 7)}-01`;
@@ -950,6 +1012,8 @@ export function createApi(db, { secureCookies }) {
 
   r.get('/overview', wrap(async (req, res) => {
     const { txns, invoices, bills, biz, now } = await loadAll(req);
+    const cashContext = await loadCashContext(req, biz, txns);
+    const currentCash = cashContext.positionAt(now);
     const { from, to } = range(req, now);
     const prior = A.priorPeriod(from, to);
     const months = A.monthsBack(now, 12);
@@ -957,25 +1021,26 @@ export function createApi(db, { secureCookies }) {
     const overdue = open.filter((i) => i.displayStatus === 'overdue');
     const unpaidBills = bills.filter((b) => b.status !== 'paid');
     const plannedItems = await C('planningItems').find(scoped(req)).toArray();
-    const plan = A.cashflow({ txns, invoices: [], bills, plannedItems, business: biz, today: now });
+    const plan = A.cashflow({ txns, invoices: [], bills, plannedItems, business: biz, today: now, startingCash: currentCash.balance });
     const monthlySpend = A.spending(txns, `${now.slice(0, 7)}-01`, now).total;
     const balanceAt = (count) => {
-      if (!biz.openingBalanceDate) return null;
+      if (currentCash.balance === null) return null;
       const movements = plan.weeks.slice(0, count).reduce((s, w) => s + w.inflows - w.outflows, 0);
-      return A.cashBalance(txns, biz, now) + movements;
+      return currentCash.balance + movements;
     };
     const upcomingPlan = plan.weeks.flatMap((w) => w.items.filter((i) => i.type !== 'invoice')).sort((a, b) => a.date.localeCompare(b.date)).slice(0, 6);
     const balanceHistory = months.map((m) => {
       const [y, mo] = m.split('-').map(Number);
       const end = new Date(Date.UTC(y, mo, 0)).toISOString().slice(0, 10);
-      return { month: m, balance: A.cashBalance(txns, biz, end < now ? end : now) };
+      return { month: m, balance: cashContext.positionAt(end < now ? end : now).balance };
     });
     res.json({
       period: { from, to, ...A.totals(txns, from, to) },
       prior: { ...prior, ...A.totals(txns, prior.from, prior.to) },
-      cash: A.cashBalance(txns, biz, now),
+      cash: currentCash.balance,
+      cashDetails: { source: currentCash.source, asOf: currentCash.asOf, missingAccounts: currentCash.missingAccounts, knownBalanceCents: currentCash.knownBalance },
       balanceHistory,
-      hasOpeningBalance: Boolean(biz.openingBalanceDate),
+      hasOpeningBalance: currentCash.balance !== null,
       monthly: A.monthlySeries(txns, months),
       receivables: { outstanding: open.reduce((s, i) => s + i.balanceDue, 0), count: open.length, overdue: overdue.reduce((s, i) => s + i.balanceDue, 0), overdueCount: overdue.length },
       payables: { outstanding: unpaidBills.reduce((s, b) => s + b.balanceDueCents, 0), count: unpaidBills.length, dueSoon: unpaidBills.filter((b) => b.dueDate <= addDays(now, 7)).slice(0, 6) },
@@ -1004,8 +1069,9 @@ export function createApi(db, { secureCookies }) {
 
   r.get('/cashflow', wrap(async (req, res) => {
     const { txns, invoices, bills, biz, now } = await loadAll(req);
-    const plannedItems = await C('planningItems').find(scoped(req)).toArray();
-    res.json(A.cashflow({ txns, invoices, bills, plannedItems, business: biz, today: now }));
+    const [plannedItems, cashContext] = await Promise.all([C('planningItems').find(scoped(req)).toArray(), loadCashContext(req, biz, txns)]);
+    const currentCash = cashContext.positionAt(now);
+    res.json({ ...A.cashflow({ txns, invoices, bills, plannedItems, business: biz, today: now, startingCash: currentCash.balance }), cashSource: currentCash.source, cashAsOf: currentCash.asOf, cashMissingAccounts: currentCash.missingAccounts });
   }));
 
   r.get('/insights', wrap(async (req, res) => {
@@ -1020,6 +1086,37 @@ export function createApi(db, { secureCookies }) {
     const biz = await business(req);
     const txns = await C('transactions').find(scoped(req, { date: { $regex: `^${year}-` }, currency: { $in: [biz.currency, null] }, excludedFromTotals: { $ne: true } })).toArray();
     res.json(A.profitAndLoss(txns, year));
+  }));
+  r.get('/reports/coverage', wrap(async (req, res) => {
+    const year = int(req.query.year ?? Number(req.today.slice(0, 4)), 'Year', { min: 1990, max: 2200 });
+    const [accounts, imports] = await Promise.all([
+      C('bankAccounts').find(scoped(req, { status: 'active' })).sort({ name: 1 }).toArray(),
+      C('statementImports').find(scoped(req, { periodStart: { $lte: `${year}-12-31` }, periodEnd: { $gte: `${year}-01-01` } }), { projection: { sourceFile: 0 } }).toArray(),
+    ]);
+    const months = Array.from({ length: 12 }, (_, index) => {
+      const month = `${year}-${String(index + 1).padStart(2, '0')}`;
+      const start = `${month}-01`, end = new Date(Date.UTC(year, index + 1, 0)).toISOString().slice(0, 10);
+      const byAccount = accounts.map((account) => {
+        const ranges = imports.filter((item) => String(item.accountId) === String(account._id) && item.periodStart <= end && item.periodEnd >= start)
+          .map((item) => [item.periodStart < start ? start : item.periodStart, item.periodEnd > end ? end : item.periodEnd]).sort((a, b) => a[0].localeCompare(b[0]));
+        let coveredThrough = '';
+        for (const [from, to] of ranges) {
+          if (!coveredThrough && from > start) break;
+          if (!coveredThrough && from <= start) coveredThrough = to;
+          else if (coveredThrough && from <= addDays(coveredThrough, 1)) { if (to > coveredThrough) coveredThrough = to; }
+          else if (coveredThrough) break;
+          if (coveredThrough >= end) break;
+        }
+        const status = coveredThrough >= end ? 'complete' : ranges.length ? 'partial' : 'missing';
+        return { accountId: String(account._id), accountName: account.name, currency: account.currency, status };
+      });
+      const complete = byAccount.length > 0 && byAccount.every((item) => item.status === 'complete');
+      const partial = byAccount.some((item) => item.status !== 'missing');
+      return { month, status: complete ? 'complete' : partial ? 'partial' : 'missing', accounts: byAccount };
+    });
+    const transactions = await C('transactions').countDocuments(scoped(req, { source: 'bank-statement', date: { $regex: `^${year}-` }, reconciliationStatus: { $ne: 'matched' } }));
+    const discrepancies = imports.filter((item) => item.discrepancyCents !== null && item.discrepancyCents !== 0).length;
+    res.json({ year, accounts: accounts.map((a) => ({ id: String(a._id), name: a.name, currency: a.currency })), months, unmatchedTransactions: transactions, statementDiscrepancies: discrepancies });
   }));
 
   r.use((_req, _res, next) => next(new HttpError(404, 'Not found')));

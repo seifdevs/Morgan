@@ -15,9 +15,11 @@
     "node": ">=20"
   },
   "dependencies": {
+    "exceljs": "4.4.0",
     "express": "^4.22.3",
     "mongodb": "^7.7.0",
     "motion": "^14.6.0",
+    "pdfjs-dist": "6.4.299",
     "react": "^19.3.1",
     "react-dom": "^19.3.1",
     "react-router-dom": "^7.18.4"
@@ -30,5 +32,8 @@
     "mongodb-memory-server": "^11.3.0",
     "typescript": "^7.0.2",
     "vite": "^8.3.5"
+  },
+  "overrides": {
+    "uuid": "^11.1.1"
   }
 }

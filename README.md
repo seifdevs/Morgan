@@ -49,12 +49,13 @@ See `docs/LEGACY.md` for what changed from the original static site and `docs/AT
 
 - **Auth:** scrypt password hashes, random session tokens stored hashed in `sessions` (30-day TTL index), `HttpOnly; SameSite=Lax` cookie, CSRF header check on state-changing requests, rate limits on login/register/password change, all other sessions revoked on password change.
 - **Isolation:** every collection is keyed by `businessId`, taken from the server-side session — never from the request.
-- **Money:** integer cents everywhere (`shared/money.js`, used by both server and client). Invoice totals are recomputed on the server.
+- **Money:** integer cents everywhere (`shared/money.js`, used by both server and client). Invoice totals are recomputed on the server. Imported bank movements change cash; they enter income or expense reporting only after classification. Transfers and card repayments are kept out of operating income and expenses.
 - **Dates:** "today" (overdue status, projections) uses the business time zone set at signup / in Settings.
-- **Figures:** everything comes from stored records. Cash on hand = opening balance (Settings) + recorded transactions. The cash-flow projection and run-rate are labelled estimates; what-if inputs are never saved. Cost insights list the transactions behind every finding.
+- **Figures:** actuals come from stored records. An account balance requires a dated opening point or statement close, then later account movements. Business cash totals include only the business currency; other currencies remain separate. The cash-flow projection and run-rate are labelled estimates; what-if inputs are never saved. Cost insights list the transactions behind every finding.
+- **Statement imports:** CSV, XLSX, and text-selectable PDF statements are parsed for review before confirmation. Imports are deduplicated by account and transaction fingerprint, saved with the original file and a checksum, and tracked in account history. The original file is private to the business-scoped database record and is not returned by list APIs. Statement periods can be reviewed against monthly coverage. Scanned PDF OCR and legacy XLS are not supported; convert those statements to CSV or XLSX. Imported statements are user-supplied records and do not independently verify bank payments.
 
-Collections: `users`, `businesses`, `sessions`, `transactions`, `customers`, `invoices` (with embedded payments), `bills`.
+Collections: `users`, `businesses`, `sessions`, `transactions`, `customers`, `invoices` (with embedded payments), `bills` (with embedded payments), `bankAccounts`, `statementImports` (including private source files), `planningItems`, `financialAudit`.
 
 ## Not included
 
-No bank / accounting-software integrations or payment processing; transactions come from manual entry or CSV import. Rate limiting is in-memory (single instance). The previous static site is kept in `legacy/` for reference.
+No live bank or accounting-software integrations, payment processing, OCR service, or independent payment verification. Rate limiting is in-memory (single instance). The previous static site is kept in `legacy/` for reference.

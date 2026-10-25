@@ -36,7 +36,7 @@ export function CashFlow() {
     // Monthly what-if adjustments spread evenly per week (12 months / 52 weeks).
     const weeklyAdj = Math.round((((toCents(revAdj || '0') ?? 0) - (toCents(costAdj || '0') ?? 0)) * 12) / 52);
     const runRate = useRunRate && data.runRateWeekly !== null ? data.runRateWeekly : 0;
-    let bal = data.opening;
+    let bal = data.opening ?? 0;
     const rows = data.weeks.map((w) => {
       const excludedInvoice = includeReceivables ? 0 : w.items.filter((i) => i.type === 'invoice').reduce((s, i) => s + i.amountCents, 0);
       const overdueIn = includeReceivables && !includeOverdue ? w.items.filter((i) => i.overdue && i.type === 'invoice').reduce((s, i) => s + i.amountCents, 0) : 0;
@@ -115,7 +115,7 @@ export function CashFlow() {
       {data && model && (
         <>
           <section className="statement" style={{ gridTemplateColumns: 'repeat(4, 1fr)' }}>
-            <div className="kpi hero-kpi"><span className="kpi-label"><span className="badge paid">{data.hasOpeningBalance ? 'Recorded estimate' : 'Incomplete'}</span></span><span className="kpi-value num">{data.hasOpeningBalance ? money(data.opening) : 'Not set'}</span><span className="kpi-foot">{data.hasOpeningBalance ? `cash as of ${formatDate(data.today)}` : 'Add an opening cash balance'}</span></div>
+            <div className="kpi hero-kpi"><span className="kpi-label"><span className="badge paid">{data.hasOpeningBalance ? 'Recorded estimate' : 'Incomplete'}</span></span><span className="kpi-value num">{data.hasOpeningBalance ? money(data.opening!) : 'Not set'}</span><span className="kpi-foot">{data.hasOpeningBalance ? `cash as of ${formatDate(data.cashAsOf || data.today)} · historical, not live` : 'Add a dated balance point for each active cash account'}</span></div>
             <div className="kpi"><span className="kpi-label"><span className="badge estimate">Estimate</span></span><span className={`kpi-value num ${data.hasOpeningBalance && model.rows.at(-1)!.balance < 0 ? 'neg' : ''}`}>{data.hasOpeningBalance ? money(model.rows.at(-1)!.balance) : 'Incomplete'}</span><span className="kpi-foot">{data.hasOpeningBalance ? `in 13 weeks · ${formatDate(model.rows.at(-1)!.end)}` : 'Starting balance required for an absolute forecast'}</span></div>
             <div className="kpi"><span className="kpi-label"><span className="badge estimate">Lowest point</span></span><span className={`kpi-value num ${data.hasOpeningBalance && model.low.balance < 0 ? 'neg' : ''}`}>{data.hasOpeningBalance ? money(model.low.balance) : 'Incomplete'}</span><span className="kpi-foot">{data.hasOpeningBalance ? `week of ${formatDay(model.low.start)}` : 'Starting balance required'}</span></div>
             <div className="kpi"><span className="kpi-label">Scheduled net</span><span className="kpi-value num">{money(model.rows.reduce((s, w) => s + w.inflows - w.outflows, 0))}</span><span className="kpi-foot">after selected receivables assumptions</span></div>
@@ -125,7 +125,7 @@ export function CashFlow() {
 
           <div className="grid main-side">
             <ChartFrame title="Projected balance" aside={<span className="badge estimate">Estimate</span>}
-              note={`The solid point is today's recorded balance; the dashed line is an estimate. Unpaid bills and saved plans are dated as entered${includeReceivables ? ', with open invoices assumed collected on their due dates' : '; open invoices are excluded by default'}.`}>
+              note={`The solid point is the latest recorded cash balance${data.cashAsOf ? ` from ${formatDate(data.cashAsOf)}` : ''}; the dashed line is an estimate from today forward. Unpaid bills and saved plans are dated as entered${includeReceivables ? ', with open invoices assumed collected on their due dates' : '; open invoices are excluded by default'}.`}>
               {data.hasOpeningBalance ? <LineChart ariaLabel="Projected weekly cash balance" height={260}
                 labels={['Today', ...model.rows.map((r) => formatDay(r.end))]}
                 series={[
@@ -196,6 +196,7 @@ export function Reports() {
   const thisYear = new Date().getFullYear();
   const [year, setYear] = useState(thisYear);
   const { data, error, loading, reload } = useApi<Pnl>(`/reports/pnl?year=${year}`);
+  const coverage = useApi<{ year: number; accounts: { id: string; name: string; currency: string }[]; months: { month: string; status: 'complete'|'partial'|'missing'; accounts: { accountId: string; accountName: string; currency: string; status: 'complete'|'partial'|'missing' }[] }[]; unmatchedTransactions: number; statementDiscrepancies: number }>(`/reports/coverage?year=${year}`);
   const sumMonths = (rows: Pnl['income']) => Array.from({ length: 12 }, (_, i) => rows.reduce((s, r) => s + r.months[i], 0));
   const inc = data ? sumMonths(data.income) : [], exp = data ? sumMonths(data.expenses) : [];
   const net = inc.map((v, i) => v - exp[i]);
@@ -229,6 +230,14 @@ export function Reports() {
         </>} />
       {error && <ErrorBox message={error} onRetry={reload} />}
       {loading && !data && <section className="panel"><LoadingRows rows={8} /></section>}
+      {coverage.error && <ErrorBox message={coverage.error} onRetry={coverage.reload} />}
+      {coverage.data && <section className="panel report-coverage">
+        <details>
+          <summary><span><b>Statement coverage</b><small>See which account periods support the recorded history for {year}.</small></span><span className="badge">{coverage.data.unmatchedTransactions} unmatched · {coverage.data.statementDiscrepancies} balance differences</span></summary>
+          {coverage.data.accounts.length ? <div className="table-wrap"><table className="table coverage-table"><thead><tr><th>Account</th>{coverage.data.months.map((m) => <th key={m.month} className="r">{formatMonth(m.month)}</th>)}</tr></thead><tbody>{coverage.data.accounts.map((account) => <tr key={account.id}><td><b>{account.name}</b><small className="sub">{account.currency}</small></td>{coverage.data!.months.map((m) => { const status = m.accounts.find((a) => a.accountId === account.id)?.status || 'missing'; return <td key={m.month} className="r"><span className={`coverage-mark ${status}`} title={`${account.name}: ${status} statement coverage for ${formatMonth(m.month)}`}>{status === 'complete' ? 'Complete' : status === 'partial' ? 'Partial' : 'No statement'}</span></td>; })}</tr>)}</tbody></table></div> : <p className="muted">Add a bank account and import statements to track statement coverage. Historical activity currently reflects only the records entered in Morgan.</p>}
+          <p className="chart-note">Complete means imported statement periods cover every day of that month. Partial or missing months may omit activity; Morgan does not treat missing months as zero.</p>
+        </details>
+      </section>}
       {data && (data.income.length || data.expenses.length ? (
         <>
           <section className="statement" style={{ gridTemplateColumns: 'repeat(3, 1fr)' }}>

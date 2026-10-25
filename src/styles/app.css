@@ -403,3 +403,14 @@ a.list-row:hover { background: #ffffff05; }
 .render-failure h1 { margin:0; font-size:32px; }
 .render-failure p { color:var(--muted); line-height:1.65; }
 .render-failure>div { display:flex; flex-wrap:wrap; gap:10px; margin-top:8px; }
+.report-coverage { margin-bottom:18px; }
+.report-coverage details>summary { display:flex; justify-content:space-between; align-items:center; gap:16px; cursor:pointer; list-style:none; }
+.report-coverage details>summary::-webkit-details-marker { display:none; }
+.report-coverage details>summary span:first-child { display:grid; gap:4px; }
+.report-coverage details>summary small { color:var(--muted); font-size:12px; }
+.report-coverage details[open]>summary { padding-bottom:16px; }
+.coverage-table { min-width:920px; }
+.coverage-mark { font-size:10px; white-space:nowrap; color:var(--muted); }
+.coverage-mark.complete { color:var(--green); }
+.coverage-mark.partial { color:var(--amber); }
+@media(max-width:700px) { .report-coverage details>summary { align-items:flex-start; flex-direction:column; } }

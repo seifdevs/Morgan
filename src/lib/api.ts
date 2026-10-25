@@ -63,7 +63,7 @@ export type MonthRow = { month: string; income: number; expenses: number; net: n
 export type Overview = {
   period: { from: string; to: string; income: number; expenses: number; net: number };
   prior: { from: string; to: string; income: number; expenses: number; net: number };
-  cash: number; hasOpeningBalance: boolean; balanceHistory: { month: string; balance: number }[];
+  cash: number | null; cashDetails: { source: string | null; asOf: string | null; missingAccounts: string[]; knownBalanceCents: number | null }; hasOpeningBalance: boolean; balanceHistory: { month: string; balance: number | null }[];
   monthly: MonthRow[];
   receivables: { outstanding: number; count: number; overdue: number; overdueCount: number };
   payables: { outstanding: number; count: number; dueSoon: Bill[] };
@@ -80,7 +80,7 @@ export type Spending = {
 };
 export type PlannedItem = { id: string; name: string; type: 'income' | 'expense'; category: string; amountCents: number; cadence: 'once' | 'weekly' | 'monthly' | 'quarterly' | 'annually'; nextDate: string; endDate: string | null; confidence: 'contracted' | 'invoiced' | 'estimated' | 'planned'; notes: string; currency: string };
 export type CashWeek = { week: number; start: string; end: string; inflows: number; outflows: number; items: { type: 'invoice' | 'bill' | 'planned'; id: string; label: string; amountCents: number; date: string; overdue: boolean; confidence?: string; cadence?: string }[] };
-export type CashFlow = { opening: number; today: string; hasOpeningBalance: boolean; weeks: CashWeek[]; runRateWeekly: number | null; historyDays: number; overdueIn: number; overdueOut: number };
+export type CashFlow = { opening: number | null; today: string; hasOpeningBalance: boolean; cashSource?: string | null; cashAsOf?: string | null; cashMissingAccounts?: string[]; weeks: CashWeek[]; runRateWeekly: number | null; historyDays: number; overdueIn: number; overdueOut: number };
 export type Insight = {
   id: string; kind: string; severity: 'high' | 'medium' | 'low'; title: string; detail: string; amountCents: number;
   evidence: string[]; evidenceType: 'transaction' | 'invoice' | 'bill';

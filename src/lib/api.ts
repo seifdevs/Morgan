@@ -41,7 +41,7 @@ export type Business = {
 };
 export type Txn = {
   id: string; date: string; description: string; vendor: string; category: string; amountCents: number; notes: string;
-  source?: string; invoiceId?: string; billId?: string; currency?: string; accountId?: string; reconciliationStatus?: string;
+  source?: string; invoiceId?: string; billId?: string; currency?: string; accountId?: string; reconciliationStatus?: string; financialClass?: string;
 };
 export type Customer = { id: string; name: string; email: string; address: string; invoiced?: number; outstanding?: number; invoices?: number };
 export type LineItem = { description: string; quantity: number; unitCents: number };
@@ -56,7 +56,8 @@ export type Invoice = {
 };
 export type Bill = {
   id: string; vendor: string; description: string; category: string; amountCents: number; issueDate: string; dueDate: string;
-  status: 'unpaid' | 'paid'; paidDate?: string;
+  status: 'unpaid' | 'partial' | 'paid'; paidDate?: string; amountPaidCents: number; balanceDueCents: number;
+  payments?: { id: string; amountCents: number; date: string; method: string; transactionId: string | null }[];
 };
 export type MonthRow = { month: string; income: number; expenses: number; net: number };
 export type Overview = {
@@ -68,7 +69,7 @@ export type Overview = {
   payables: { outstanding: number; count: number; dueSoon: Bill[] };
   aging: { key: string; label: string; amount: number; count: number }[];
   upcomingInvoices: Invoice[]; recent: Txn[];
-  counts: { transactions: number; invoices: number; bills: number };
+  counts: { transactions: number; invoices: number; bills: number; unclassified: number };
   financialPlan: { monthlyBudgetCents: number | null; monthlySpend: number; monthlyRemaining: number | null; minimumCashCents: number | null; forecast: { days7: number | null; days30: number | null; days90: number | null }; upcoming: { type: 'bill' | 'planned'; id: string; label: string; amountCents: number; date: string; overdue: boolean; confidence?: string }[] };
 };
 export type Breakdown = { name: string; amount: number; count: number; priorAmount: number };

@@ -158,8 +158,8 @@ export function Bills() {
   const [deleting, setDeleting] = useState<Bill | null>(null);
   const [show, setShow] = useState<'unpaid' | 'paid'>('unpaid');
   const today = todayISO();
-  const list = (data || []).filter((b) => b.status === show).sort((a, b) => (show === 'unpaid' ? a.dueDate.localeCompare(b.dueDate) : (b.paidDate || '').localeCompare(a.paidDate || '')));
-  const unpaid = (data || []).filter((b) => b.status === 'unpaid');
+  const list = (data || []).filter((b) => show === 'paid' ? b.status === 'paid' : b.status !== 'paid').sort((a, b) => (show === 'unpaid' ? a.dueDate.localeCompare(b.dueDate) : (b.paidDate || '').localeCompare(a.paidDate || '')));
+  const unpaid = (data || []).filter((b) => b.status !== 'paid');
 
   async function call(path: string, body?: unknown, msg?: string, method = 'POST') {
     try { await api(path, { method, body }); if (msg) toast(msg); setPaying(null); setDeleting(null); reload(); }
@@ -168,38 +168,38 @@ export function Bills() {
 
   return (
     <>
-      <PageHeader eyebrow="Billing" title="Bills" description="Money you owe suppliers. Marking a bill paid records the expense in your transactions."
+      <PageHeader eyebrow="Billing" title="Bills" description="Track supplier bills and payments. Each payment reduces the amount still due and appears once in transactions."
         actions={<button className="btn primary" onClick={() => setEditing('new')}><Icon name="plus" size={16} />Add bill</button>} />
       {data && unpaid.length > 0 && (
         <section className="statement" style={{ gridTemplateColumns: 'repeat(3, 1fr)' }}>
-          <div className="kpi hero-kpi"><span className="kpi-label">Unpaid</span><span className="kpi-value num">{money(unpaid.reduce((s, b) => s + b.amountCents, 0))}</span><span className="kpi-foot">{unpaid.length} bills</span></div>
-          <div className="kpi"><span className="kpi-label">Past due</span><span className="kpi-value num neg">{money(unpaid.filter((b) => b.dueDate < today).reduce((s, b) => s + b.amountCents, 0))}</span><span className="kpi-foot">{unpaid.filter((b) => b.dueDate < today).length} bills</span></div>
-          <div className="kpi"><span className="kpi-label">Due in 7 days</span><span className="kpi-value num">{money(unpaid.filter((b) => b.dueDate >= today && b.dueDate <= addDaysISO(today, 7)).reduce((s, b) => s + b.amountCents, 0))}</span><span className="kpi-foot">upcoming</span></div>
+          <div className="kpi hero-kpi"><span className="kpi-label">Outstanding</span><span className="kpi-value num">{money(unpaid.reduce((s, b) => s + b.balanceDueCents, 0))}</span><span className="kpi-foot">{unpaid.length} open bills</span></div>
+          <div className="kpi"><span className="kpi-label">Past due</span><span className="kpi-value num neg">{money(unpaid.filter((b) => b.dueDate < today).reduce((s, b) => s + b.balanceDueCents, 0))}</span><span className="kpi-foot">{unpaid.filter((b) => b.dueDate < today).length} bills</span></div>
+          <div className="kpi"><span className="kpi-label">Due in 7 days</span><span className="kpi-value num">{money(unpaid.filter((b) => b.dueDate >= today && b.dueDate <= addDaysISO(today, 7)).reduce((s, b) => s + b.balanceDueCents, 0))}</span><span className="kpi-foot">upcoming</span></div>
         </section>
       )}
       <section className="panel">
         <div className="tabs" role="tablist">
           <button role="tab" aria-selected={show === 'unpaid'} onClick={() => setShow('unpaid')}>Unpaid<span className="count">{unpaid.length}</span>{show === 'unpaid' && <Marker id="bill-tab" className="tab-ul" />}</button>
-          <button role="tab" aria-selected={show === 'paid'} onClick={() => setShow('paid')}>Paid<span className="count">{(data?.length || 0) - unpaid.length}</span>{show === 'paid' && <Marker id="bill-tab" className="tab-ul" />}</button>
+          <button role="tab" aria-selected={show === 'paid'} onClick={() => setShow('paid')}>Paid<span className="count">{(data || []).filter((b) => b.status === 'paid').length}</span>{show === 'paid' && <Marker id="bill-tab" className="tab-ul" />}</button>
         </div>
         {error && <div style={{ padding: 16 }}><ErrorBox message={error} onRetry={reload} /></div>}
         {loading && !data && <LoadingRows />}
         {data && (list.length ? (
           <div className="table-wrap"><table className="table responsive">
-            <thead><tr><th>Vendor</th><th className="hide-sm">Category</th><th className="hide-sm">{show === 'unpaid' ? 'Due' : 'Paid on'}</th><th className="r">Amount</th><th className="hide-sm" /></tr></thead>
+            <thead><tr><th>Vendor</th><th className="hide-sm">Category</th><th className="hide-sm">{show === 'unpaid' ? 'Due' : 'Paid on'}</th><th className="r">{show === 'unpaid' ? 'Balance due' : 'Amount'}</th><th className="hide-sm" /></tr></thead>
             <tbody>{list.map((b) => {
-              const late = b.status === 'unpaid' && b.dueDate < today;
+              const late = b.status !== 'paid' && b.dueDate < today;
               return (
                 <tr key={b.id}>
-                  <td><b>{b.vendor}</b><span className="sub">{b.description || '—'}{late && <span className="neg"> · {daysBetween(b.dueDate, today)} days past due</span>}</span></td>
+                  <td><b>{b.vendor}</b><span className="sub">{b.description || '—'}{b.status === 'partial' ? ` · ${money(b.amountPaidCents)} paid of ${money(b.amountCents)}` : ''}{late && <span className="neg"> · {daysBetween(b.dueDate, today)} days past due</span>}</span></td>
                   <td className="hide-sm muted">{b.category}</td>
                   <td className="hide-sm muted">{formatDate(show === 'unpaid' ? b.dueDate : b.paidDate)}</td>
-                  <td className="amount">{money(b.amountCents)}</td>
+                  <td className="amount">{money(show === 'unpaid' ? b.balanceDueCents : b.amountCents)}</td>
                   <td className="hide-sm"><div className="row-actions">
-                    {b.status === 'unpaid' ? (<>
-                      <button className="btn sm outline" onClick={() => setPaying(b)}>Mark paid</button>
-                      <button className="btn ghost icon sm" aria-label={`Edit ${b.vendor} bill`} onClick={() => setEditing(b)}><Icon name="edit" size={15} /></button>
-                      <button className="btn ghost icon sm" aria-label={`Delete ${b.vendor} bill`} onClick={() => setDeleting(b)}><Icon name="trash" size={15} /></button>
+                    {b.status !== 'paid' ? (<>
+                      <button className="btn sm outline" onClick={() => setPaying(b)}>{b.status === 'partial' ? 'Add payment' : 'Record payment'}</button>
+                      {b.amountPaidCents === 0 && <><button className="btn ghost icon sm" aria-label={`Edit ${b.vendor} bill`} onClick={() => setEditing(b)}><Icon name="edit" size={15} /></button>
+                      <button className="btn ghost icon sm" aria-label={`Delete ${b.vendor} bill`} onClick={() => setDeleting(b)}><Icon name="trash" size={15} /></button></>}
                     </>) : <button className="btn sm ghost" onClick={() => call(`/bills/${b.id}/unpay`, undefined, 'Bill marked unpaid; its expense was removed')}>Mark unpaid</button>}
                   </div></td>
                 </tr>
@@ -211,11 +211,12 @@ export function Bills() {
 
       {editing && <BillForm bill={editing === 'new' ? null : editing} onClose={() => { setEditing(null); if (params.get('new')) setParams({}, { replace: true }); }} onSaved={() => { setEditing(null); reload(); }} />}
       {paying && (
-        <Modal title={`Mark ${paying.vendor} bill paid`} description={money(paying.amountCents)} onClose={() => setPaying(null)}
-          footer={<><button className="btn outline" onClick={() => setPaying(null)}>Cancel</button><button className="btn primary" form="pay-bill">Mark paid</button></>}>
-          <form id="pay-bill" className="form-grid" onSubmit={(e) => { e.preventDefault(); call(`/bills/${paying.id}/pay`, { date: new FormData(e.currentTarget).get('date') }, 'Bill paid and expense recorded'); }}>
+        <Modal title={`Record payment · ${paying.vendor}`} description={`${money(paying.balanceDueCents)} remaining`} onClose={() => setPaying(null)}
+          footer={<><button className="btn outline" onClick={() => setPaying(null)}>Cancel</button><button className="btn primary" form="pay-bill">Record payment</button></>}>
+          <form id="pay-bill" className="form-grid" onSubmit={(e) => { e.preventDefault(); const f = Object.fromEntries(new FormData(e.currentTarget)) as Record<string, string>; call(`/bills/${paying.id}/pay`, { date: f.date, amountCents: toCents(f.amount) }, 'Payment recorded; bill balance updated'); }}>
+            <div className="field"><label htmlFor="pb-amount">Payment amount</label><input className="input num" id="pb-amount" name="amount" inputMode="decimal" required defaultValue={centsToInput(paying.balanceDueCents)} /></div>
             <div className="field"><label htmlFor="pb-date">Payment date</label><input className="input" id="pb-date" name="date" type="date" required defaultValue={today} max={today} /></div>
-            <p className="muted" style={{ fontSize: 13 }}>An expense transaction for {money(paying.amountCents)} is added to your records.</p>
+            <p className="muted" style={{ fontSize: 13 }}>A transaction is recorded for this amount. You can make another payment later to clear the remaining balance.</p>
           </form>
         </Modal>
       )}

@@ -18,6 +18,7 @@ export async function connectDb(uri, dbName) {
     db.collection('customers').createIndex({ businessId: 1, name: 1 }),
     db.collection('bills').createIndex({ businessId: 1, dueDate: 1 }),
     db.collection('planningItems').createIndex({ businessId: 1, nextDate: 1 }),
+    db.collection('financialAudit').createIndex({ businessId: 1, createdAt: -1 }),
   ]);
   return { client, db };
 }

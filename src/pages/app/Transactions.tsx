@@ -8,7 +8,7 @@ import { formatDate, todayISO } from '../../lib/dates';
 import { useApi, useDocumentTitle, useMoney } from '../../lib/hooks';
 import { centsToInput, toCents } from '../../../shared/money.js';
 
-type List = { items: Txn[]; total: number; income: number; expenses: number; currency?: string; page: number; limit: number };
+type List = { items: Txn[]; total: number; income: number; expenses: number; unclassified?: number; currency?: string; page: number; limit: number };
 type Facets = { categories: string[]; vendors: string[]; currencies?: string[] };
 const SUGGESTED = ['Client revenue', 'Payroll', 'Rent & workspace', 'Software', 'Contractors', 'Marketing', 'Travel', 'Equipment', 'Office & admin', 'Taxes & fees', 'Insurance', 'Utilities'];
 
@@ -19,6 +19,7 @@ export default function Transactions() {
   const [params, setParams] = useSearchParams();
   const [searchInput, setSearchInput] = useState(params.get('search') || '');
   const [editing, setEditing] = useState<Txn | 'new' | null>(params.get('new') ? 'new' : null);
+  const [classifying, setClassifying] = useState<Txn | null>(null);
   const [importing, setImporting] = useState(!!params.get('import'));
   const [deleting, setDeleting] = useState<Txn | null>(null);
 
@@ -111,7 +112,8 @@ export default function Transactions() {
             <span><b className="num">{data.total.toLocaleString()}</b> transactions</span>
             <span>Income <b className="num pos">{summaryMoney(data.income)}</b><small className="sub">{data.currency} totals</small></span>
             <span>Expenses <b className="num">{summaryMoney(data.expenses)}</b><small className="sub">{data.currency} totals</small></span>
-            <span>Net <b className={`num ${data.income - data.expenses < 0 ? 'neg' : ''}`}>{summaryMoney(data.income - data.expenses)}</b><small className="sub">{data.currency} totals</small></span>
+            <span>Operating net <b className={`num ${data.income - data.expenses < 0 ? 'neg' : ''}`}>{summaryMoney(data.income - data.expenses)}</b><small className="sub">{data.currency} totals · statement movements needing review excluded</small></span>
+            {data.unclassified ? <span className="callout info" style={{ margin: 0, padding: '8px 10px' }}>{data.unclassified} bank movement{data.unclassified === 1 ? '' : 's'} need classification</span> : null}
           </div>
         )}
         {error && <div style={{ padding: 16 }}><ErrorBox message={error} onRetry={reload} /></div>}
@@ -129,7 +131,7 @@ export default function Transactions() {
                 <tbody>{data.items.map((t) => (
                   <tr key={t.id}>
                     <td className="muted num">{formatDate(t.date)}</td>
-                    <td><b>{t.description}</b><span className="sub">{[t.vendor, t.source === 'invoice-payment' ? 'Invoice payment' : t.source === 'bill-payment' ? 'Bill payment' : ['import','bank-statement'].includes(t.source || '') ? 'Imported statement record' : '', t.reconciliationStatus === 'matched' ? 'Matched' : t.source === 'bank-statement' ? 'Needs review' : ''].filter(Boolean).join(' · ')}</span></td>
+                    <td><b>{t.description}</b><span className="sub">{[t.vendor, t.source === 'invoice-payment' ? 'Invoice payment' : t.source === 'bill-payment' ? 'Bill payment' : ['import','bank-statement'].includes(t.source || '') ? 'Imported statement record' : '', t.reconciliationStatus === 'matched' ? 'Matched' : t.source === 'bank-statement' ? (t.financialClass === 'unclassified' || !t.financialClass ? 'Needs financial review' : t.financialClass.replaceAll('-', ' ')) : ''].filter(Boolean).join(' · ')}{t.source === 'bank-statement' && t.reconciliationStatus !== 'matched' && <button className="link-btn" style={{ marginLeft: 8 }} onClick={() => setClassifying(t)}>{t.financialClass && t.financialClass !== 'unclassified' ? 'Review class' : 'Classify'}</button>}</span></td>
                     <td className="hide-sm"><button className="btn ghost sm" onClick={() => set('category', t.category)}>{t.category}</button></td>
                     <td className={`amount ${t.amountCents >= 0 ? 'pos' : ''}`}>{new Intl.NumberFormat(undefined, { style: 'currency', currency: t.currency || 'USD', signDisplay: 'exceptZero' }).format(t.amountCents / 100)}</td>
                     <td className="hide-sm"><div className="row-actions">
@@ -165,6 +167,7 @@ export default function Transactions() {
 
       {editing && <TxnForm txn={editing === 'new' ? null : editing} categories={[...new Set([...(facets.data?.categories || []), ...SUGGESTED])]} vendors={facets.data?.vendors || []}
         onClose={() => setEditing(null)} onSaved={() => { setEditing(null); reload(); facets.reload(); }} />}
+      {classifying && <ClassificationForm txn={classifying} onClose={() => setClassifying(null)} onSaved={() => { setClassifying(null); reload(); }} />}
       {importing && <ImportCsv onClose={() => setImporting(false)} onDone={() => { setImporting(false); reload(); facets.reload(); }} />}
       {deleting && (
         <Modal title="Delete transaction?" description={`${deleting.description} · ${money(deleting.amountCents)} on ${formatDate(deleting.date)}`} onClose={() => setDeleting(null)}
@@ -177,9 +180,35 @@ export default function Transactions() {
   );
 }
 
+function ClassificationForm({ txn, onClose, onSaved }: { txn: Txn; onClose: () => void; onSaved: () => void }) {
+  const toast = useToast();
+  const [financialClass, setFinancialClass] = useState(txn.financialClass || 'unclassified');
+  const [category, setCategory] = useState(txn.category || 'Uncategorized');
+  const [error, setError] = useState('');
+  const [busy, setBusy] = useState(false);
+  async function submit(e: FormEvent<HTMLFormElement>) {
+    e.preventDefault(); setBusy(true); setError('');
+    try {
+      await api(`/bank-transactions/${txn.id}/classification`, { method: 'PATCH', body: { financialClass, category } });
+      toast('Statement transaction classified'); onSaved();
+    } catch (err) { setError((err as Error).message); } finally { setBusy(false); }
+  }
+  return <Modal title="Classify statement transaction" description={`${txn.description} · ${new Intl.NumberFormat(undefined, { style: 'currency', currency: txn.currency || 'USD' }).format(txn.amountCents / 100)} · ${formatDate(txn.date)}`} onClose={onClose}
+    footer={<><button className="btn outline" onClick={onClose}>Cancel</button><button className="btn primary" form="classification-form" disabled={busy}>{busy && <span className="spinner" />}Save classification</button></>}>
+    <form id="classification-form" className="form-grid" onSubmit={submit}>
+      {error && <div className="form-error" role="alert">{error}</div>}
+      <div className="field"><label htmlFor="txn-class">Financial treatment</label><select className="select" id="txn-class" value={financialClass} onChange={(e) => setFinancialClass(e.target.value)}>
+        <option value="unclassified">Needs review</option>{txn.amountCents > 0 ? <><option value="income">Business income</option><option value="owner-contribution">Owner contribution</option><option value="refund">Refund of business expense</option></> : <><option value="expense">Business expense</option><option value="owner-withdrawal">Owner withdrawal</option><option value="card-payment">Credit card payment</option></>}<option value="transfer">Internal transfer</option><option value="financing">Loan or financing</option><option value="reversal">Reversal</option>
+      </select><span className="hint">The cash balance changes when a transaction is recorded. Income and spending reports include only items classified as business income or expense.</span></div>
+      <div className="field"><label htmlFor="txn-category">Category</label><input className="input" id="txn-category" value={category} onChange={(e) => setCategory(e.target.value)} maxLength={60} /></div>
+    </form>
+  </Modal>;
+}
+
 export function TxnForm({ txn, categories, vendors, onClose, onSaved }: { txn: Txn | null; categories: string[]; vendors: string[]; onClose: () => void; onSaved: (t: Txn) => void }) {
   const toast = useToast();
   const [type, setType] = useState<'income' | 'expense'>(txn ? (txn.amountCents >= 0 ? 'income' : 'expense') : 'expense');
+  const [financialClass, setFinancialClass] = useState(txn?.financialClass || (txn?.amountCents && txn.amountCents > 0 ? 'income' : 'expense'));
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
   async function submit(e: FormEvent<HTMLFormElement>) {
@@ -189,7 +218,7 @@ export function TxnForm({ txn, categories, vendors, onClose, onSaved }: { txn: T
     if (cents === null || cents <= 0) { setError('Enter a positive amount with at most 2 decimals'); return; }
     setBusy(true); setError('');
     try {
-      const body = { ...f, amountCents: cents, type };
+      const body = { ...f, amountCents: cents, type, financialClass };
       const saved = await api<Txn>(txn ? `/transactions/${txn.id}` : '/transactions', { method: txn ? 'PATCH' : 'POST', body });
       toast(txn ? 'Transaction updated' : 'Transaction added');
       onSaved(saved);
@@ -201,9 +230,12 @@ export function TxnForm({ txn, categories, vendors, onClose, onSaved }: { txn: T
       <form id="txn-form" className="form-grid" onSubmit={submit}>
         {error && <div className="form-error" role="alert">{error}</div>}
         <div className="segmented" role="group" aria-label="Type">
-          <button type="button" aria-pressed={type === 'expense'} onClick={() => setType('expense')}>{type === 'expense' && <Marker id="type-seg" className="seg-marker" />}Expense</button>
-          <button type="button" aria-pressed={type === 'income'} onClick={() => setType('income')}>{type === 'income' && <Marker id="type-seg" className="seg-marker" />}Income</button>
+          <button type="button" aria-pressed={type === 'expense'} onClick={() => { setType('expense'); if (!['expense', 'owner-withdrawal', 'card-payment', 'transfer', 'financing', 'reversal', 'unclassified'].includes(financialClass)) setFinancialClass('expense'); }}>{type === 'expense' && <Marker id="type-seg" className="seg-marker" />}Expense</button>
+          <button type="button" aria-pressed={type === 'income'} onClick={() => { setType('income'); if (!['income', 'owner-contribution', 'refund', 'transfer', 'financing', 'reversal', 'unclassified'].includes(financialClass)) setFinancialClass('income'); }}>{type === 'income' && <Marker id="type-seg" className="seg-marker" />}Income</button>
         </div>
+        <div className="field"><label htmlFor="t-treatment">Financial treatment</label><select className="select" id="t-treatment" value={financialClass} onChange={(e) => setFinancialClass(e.target.value)}>
+          {type === 'expense' ? <><option value="expense">Business expense</option><option value="owner-withdrawal">Owner withdrawal</option><option value="card-payment">Credit card payment</option></> : <><option value="income">Business income</option><option value="owner-contribution">Owner contribution</option><option value="refund">Refund of business expense</option></>}<option value="transfer">Internal transfer</option><option value="financing">Loan or financing</option><option value="reversal">Reversal · review later</option><option value="unclassified">Needs review</option>
+        </select><span className="hint">Only business income and expenses appear in those reports. Other cash movements remain in recorded cash.</span></div>
         <div className="form-grid two">
           <div className="field"><label htmlFor="t-amount">Amount</label><input className="input num" id="t-amount" name="amount" inputMode="decimal" required defaultValue={txn ? centsToInput(Math.abs(txn.amountCents)) : ''} placeholder="0.00" autoFocus /></div>
           <div className="field"><label htmlFor="t-date">Date</label><input className="input" id="t-date" name="date" type="date" required defaultValue={txn?.date || todayISO()} /></div>

@@ -42,6 +42,15 @@ export function decorateInvoice(inv, now = today()) {
   };
 }
 
+export function decorateBill(bill) {
+  const { _id, businessId, ...rest } = bill;
+  const legacyPaid = bill.status === 'paid' && !(bill.payments || []).length;
+  const amountPaidCents = legacyPaid ? bill.amountCents : (bill.payments || []).reduce((sum, p) => sum + p.amountCents, 0);
+  const balanceDueCents = Math.max(0, bill.amountCents - amountPaidCents);
+  const status = balanceDueCents === 0 ? 'paid' : amountPaidCents > 0 ? 'partial' : 'unpaid';
+  return { id: String(_id), ...rest, status, amountPaidCents, balanceDueCents, payments: (bill.payments || []).map((p) => ({ ...p, id: String(p.id), transactionId: p.transactionId ? String(p.transactionId) : null })) };
+}
+
 const validTz = (tz) => { try { return typeof tz === 'string' && !!new Intl.DateTimeFormat('en-US', { timeZone: tz }); } catch { return false; } };
 export const todayIn = (tz) => (validTz(tz) ? new Intl.DateTimeFormat('en-CA', { timeZone: tz }).format(new Date()) : today());
 const dec = (req, inv) => decorateInvoice(inv, req.today);
@@ -181,7 +190,7 @@ export function createApi(db, { secureCookies }) {
   r.delete('/account', rateLimit({ key: 'delete-account', limit: 5, windowMs: 3600e3, failuresOnly: true }), wrap(async (req, res) => {
     if (!(await verifyPassword(String(req.body?.password || ''), req.user.passwordHash))) throw new HttpError(401, 'Password is incorrect');
     const q = { businessId: req.businessId };
-    await Promise.all(['transactions', 'invoices', 'customers', 'bills', 'planningItems', 'bankAccounts', 'statementImports'].map((c) => C(c).deleteMany(q)));
+    await Promise.all(['transactions', 'invoices', 'customers', 'bills', 'planningItems', 'bankAccounts', 'statementImports', 'financialAudit'].map((c) => C(c).deleteMany(q)));
     await C('sessions').deleteMany({ userId: req.user._id });
     await C('businesses').deleteOne({ _id: req.businessId });
     await C('users').deleteOne({ _id: req.user._id });
@@ -291,16 +300,26 @@ export function createApi(db, { secureCookies }) {
   }));
 
   /* ---------------- Transactions ---------------- */
+  const validateClassDirection = (financialClass, amountCents) => {
+    const positive = ['income', 'owner-contribution', 'refund'].includes(financialClass);
+    const negative = ['expense', 'owner-withdrawal', 'card-payment'].includes(financialClass);
+    if (positive && amountCents <= 0) throw bad(`${financialClass.replaceAll('-', ' ')} must be an incoming cash movement`);
+    if (negative && amountCents >= 0) throw bad(`${financialClass.replaceAll('-', ' ')} must be an outgoing cash movement`);
+  };
   const txnFields = (b) => {
     const amount = cents(b.amountCents ?? b.amount, 'Amount');
     if (amount === 0) throw bad('Amount cannot be zero');
     const type = oneOf(b.type || (amount >= 0 ? 'income' : 'expense'), 'Type', ['income', 'expense']);
+    const financialClass = oneOf(b.financialClass || type, 'Financial treatment', ['income', 'expense', 'transfer', 'financing', 'owner-contribution', 'owner-withdrawal', 'refund', 'reversal', 'card-payment', 'unclassified']);
+    const signedAmount = type === 'expense' ? -Math.abs(amount) : Math.abs(amount);
+    validateClassDirection(financialClass, signedAmount);
     return {
       date: date(b.date, 'Date'),
       description: str(b.description, 'Description', { required: true, max: 200 }),
       vendor: str(b.vendor, 'Vendor / payer', { max: 120 }),
       category: str(b.category, 'Category', { max: 60 }) || 'Uncategorized',
-      amountCents: type === 'expense' ? -Math.abs(amount) : Math.abs(amount),
+      amountCents: signedAmount,
+      financialClass,
       notes: str(b.notes, 'Notes', { max: 1000 }),
     };
   };
@@ -310,8 +329,15 @@ export function createApi(db, { secureCookies }) {
     const biz = await business(req);
     const { search, from, to, type, category, vendor } = req.query;
     if (from || to) q.date = { ...(from && { $gte: date(from, 'From') }), ...(to && { $lte: date(to, 'To') }) };
-    if (type === 'income') q.amountCents = { $gt: 0 };
-    if (type === 'expense') q.amountCents = { $lt: 0 };
+    if (type === 'income' || type === 'expense') {
+      const sign = type === 'income' ? { $gt: 0 } : { $lt: 0 };
+      const classes = [{ financialClass: type, amountCents: sign }];
+      if (type === 'expense') classes.push({ financialClass: 'refund', amountCents: { $gt: 0 } });
+      classes.push({ financialClass: { $exists: false }, source: { $ne: 'bank-statement' }, amountCents: sign });
+      if (type === 'income') classes.push({ financialClass: { $exists: false }, invoiceId: { $exists: true }, amountCents: sign });
+      if (type === 'expense') classes.push({ financialClass: { $exists: false }, billId: { $exists: true }, amountCents: sign });
+      q.$and = [...(q.$and || []), { $or: classes }];
+    }
     if (typeof category === 'string' && category) q.category = category;
     if (typeof vendor === 'string' && vendor) q.vendor = vendor;
     if (typeof req.query.currency === 'string' && CURRENCIES.includes(req.query.currency)) q.currency = req.query.currency;
@@ -328,13 +354,15 @@ export function createApi(db, { secureCookies }) {
       C('transactions').find(q).sort({ [sortKey]: dir, _id: dir }).skip(page * limit).limit(limit).toArray(),
       C('transactions').aggregate([{ $match: totalsQuery }, { $group: {
         _id: null, count: { $sum: 1 },
-        income: { $sum: { $cond: [{ $gt: ['$amountCents', 0] }, '$amountCents', 0] } },
-        expenses: { $sum: { $cond: [{ $lt: ['$amountCents', 0] }, '$amountCents', 0] } },
+        income: { $sum: { $cond: [{ $and: [{ $gt: ['$amountCents', 0] }, { $or: [{ $eq: ['$financialClass', 'income'] }, { $and: [{ $eq: [{ $type: '$financialClass' }, 'missing'] }, { $or: [{ $ne: ['$source', 'bank-statement'] }, { $ne: [{ $type: '$invoiceId' }, 'missing'] }] }] }] }] }, '$amountCents', 0] } },
+        expenses: { $sum: { $cond: [{ $and: [{ $lt: ['$amountCents', 0] }, { $or: [{ $eq: ['$financialClass', 'expense'] }, { $and: [{ $eq: [{ $type: '$financialClass' }, 'missing'] }, { $or: [{ $ne: ['$source', 'bank-statement'] }, { $ne: [{ $type: '$billId' }, 'missing'] }] }] }] }] }, '$amountCents', 0] } },
+        refunds: { $sum: { $cond: [{ $and: [{ $eq: ['$financialClass', 'refund'] }, { $gt: ['$amountCents', 0] }] }, '$amountCents', 0] } },
+        unclassified: { $sum: { $cond: [{ $and: [{ $ne: ['$excludedFromTotals', true] }, { $or: [{ $eq: ['$financialClass', 'unclassified'] }, { $and: [{ $eq: [{ $type: '$financialClass' }, 'missing'] }, { $eq: ['$source', 'bank-statement'] }, { $eq: [{ $type: '$invoiceId' }, 'missing'] }, { $eq: [{ $type: '$billId' }, 'missing'] }, { $ne: ['$matchedRecordType', 'transfer'] }] }] }] }, 1, 0] } },
       } }]).toArray(),
       C('transactions').countDocuments(q),
     ]);
     const s = agg[0] || { count: 0, income: 0, expenses: 0 };
-    res.json({ items: items.map(pub), total: totalCount, income: s.income, expenses: -s.expenses, page, limit });
+    res.json({ items: items.map(pub), total: totalCount, income: s.income, expenses: -s.expenses - (s.refunds || 0), unclassified: s.unclassified || 0, page, limit });
   }));
 
   r.get('/transactions/facets', wrap(async (req, res) => {
@@ -379,9 +407,17 @@ export function createApi(db, { secureCookies }) {
     const [imports, balances] = await Promise.all([
       C('statementImports').find(scoped(req, { accountId: { $in: ids } })).sort({ importedAt: -1 }).toArray(),
       Promise.all(accounts.map(async (a) => {
-        const dateFilter = a.openingBalanceDate ? { date: { $gt: a.openingBalanceDate } } : {};
-        const [result] = await C('transactions').aggregate([{ $match: scoped(req, { accountId: a._id, ...dateFilter }) }, { $group: { _id: '$accountId', balance: { $sum: '$amountCents' }, latestDate: { $max: '$date' } } }]).toArray();
-        return result ? { ...result, balance: result.balance + (a.openingBalanceCents || 0) } : { _id: a._id, balance: a.openingBalanceCents, latestDate: null };
+        const [records, accountImports] = await Promise.all([
+          C('transactions').find(scoped(req, { accountId: a._id })).toArray(),
+          C('statementImports').find(scoped(req, { accountId: a._id, closingBalanceCents: { $ne: null } })).sort({ periodEnd: -1, importedAt: -1 }).limit(1).toArray(),
+        ]);
+        const statement = accountImports[0];
+        const baselineCents = statement?.closingBalanceCents ?? a.openingBalanceCents;
+        const baselineDate = statement?.periodEnd ?? a.openingBalanceDate;
+        const latestDate = records.reduce((latest, t) => t.date > latest ? t.date : latest, '');
+        if (baselineCents === null || baselineCents === undefined || !baselineDate) return { _id: a._id, balance: null, latestDate: latestDate || null, balanceSource: null, balanceAsOf: null };
+        const movement = records.filter((t) => t.date > baselineDate).reduce((sum, t) => sum + t.amountCents, 0);
+        return { _id: a._id, balance: baselineCents + movement, latestDate: latestDate || baselineDate, balanceSource: statement ? 'statement' : 'opening-balance', balanceAsOf: latestDate > baselineDate ? latestDate : baselineDate };
       })),
     ]);
     const importByAccount = new Map();
@@ -389,7 +425,7 @@ export function createApi(db, { secureCookies }) {
     const balanceByAccount = new Map(balances.map((b) => [String(b._id), b]));
     res.json(accounts.map((a) => {
       const latest = importByAccount.get(String(a._id)), calc = balanceByAccount.get(String(a._id));
-      return { ...publicBankAccount(a), latestImport: latest ? { id: String(latest._id), filename: latest.filename, importedAt: latest.importedAt, periodStart: latest.periodStart, periodEnd: latest.periodEnd, closingBalanceCents: latest.closingBalanceCents, importedCount: latest.importedCount, duplicateCount: latest.duplicateCount, discrepancyCents: latest.discrepancyCents } : null, calculatedBalanceCents: calc?.balance ?? null, latestTransactionDate: calc?.latestDate ?? null };
+      return { ...publicBankAccount(a), latestImport: latest ? { id: String(latest._id), filename: latest.filename, importedAt: latest.importedAt, periodStart: latest.periodStart, periodEnd: latest.periodEnd, closingBalanceCents: latest.closingBalanceCents, importedCount: latest.importedCount, duplicateCount: latest.duplicateCount, discrepancyCents: latest.discrepancyCents } : null, calculatedBalanceCents: calc?.balance ?? null, balanceSource: calc?.balanceSource ?? null, balanceAsOf: calc?.balanceAsOf ?? null, latestTransactionDate: calc?.latestDate ?? null };
     }));
   }));
   r.post('/bank-accounts', wrap(async (req, res) => {
@@ -442,7 +478,7 @@ export function createApi(db, { secureCookies }) {
     const biz = await business(req);
     const transactions = await C('transactions').find(scoped(req, { accountId })).sort({ date: -1 }).limit(500).toArray();
     const [bills, invoices] = await Promise.all([
-      C('bills').find(scoped(req, { status: 'unpaid' })).toArray(),
+      C('bills').find(scoped(req, { status: { $in: ['unpaid', 'partial'] } })).toArray(),
       C('invoices').find(scoped(req, { status: 'sent' })).toArray(),
     ]);
     const otherTransactions = await C('transactions').find(scoped(req, { source: { $ne: 'bank-statement' }, reconciliationStatus: { $ne: 'matched' } })).sort({ date: -1 }).limit(1000).toArray();
@@ -455,7 +491,10 @@ export function createApi(db, { secureCookies }) {
           const remaining = invoiceTotals(inv).total - (inv.payments || []).reduce((s, p) => s + p.amountCents, 0);
           if (t.currency === biz.currency && remaining >= t.amountCents && dateWithin(t.date, inv.dueDate, 30) && sameParty(t.vendor, inv.customer?.name)) matches.push({ kind: 'invoice', id: String(inv._id), label: `${inv.number} · ${inv.customer?.name || 'Customer'}`, amountCents: remaining });
         }
-        if (t.amountCents < 0 && t.currency === biz.currency) for (const bill of bills) if (bill.amountCents === -t.amountCents && dateWithin(t.date, bill.dueDate, 30) && sameParty(t.vendor, bill.vendor)) matches.push({ kind: 'bill', id: String(bill._id), label: `${bill.vendor} · ${bill.description || 'Bill'}`, amountCents: bill.amountCents });
+        if (t.amountCents < 0 && t.currency === biz.currency) for (const bill of bills) {
+          const due = Math.max(0, bill.amountCents - (bill.payments || []).reduce((sum, p) => sum + p.amountCents, 0));
+          if (due >= -t.amountCents && due > 0 && dateWithin(t.date, bill.dueDate, 30) && sameParty(t.vendor, bill.vendor)) matches.push({ kind: 'bill', id: String(bill._id), label: `${bill.vendor} · ${bill.description || 'Bill'} · ${formatMoney(due, biz.currency)} due`, amountCents: due });
+        }
         for (const x of otherTransactions) if (String(x._id) !== String(t._id) && x.amountCents === t.amountCents && (x.currency || biz.currency) === t.currency && dateWithin(t.date, x.date, 7) && sameParty(t.vendor, x.vendor || x.description)) matches.push({ kind: 'existing', id: String(x._id), label: `${x.vendor || x.description} · existing transaction`, amountCents: Math.abs(x.amountCents) });
         for (const x of transfers) if (Math.abs(x.amountCents) === Math.abs(t.amountCents) && x.amountCents === -t.amountCents && x.currency === t.currency && dateWithin(t.date, x.date, 7)) matches.push({ kind: 'transfer', id: String(x._id), label: `${x.description} · other account`, amountCents: Math.abs(x.amountCents) });
       }
@@ -479,16 +518,21 @@ export function createApi(db, { secureCookies }) {
       const fullyPaid = txn.amountCents === due;
       const { modifiedCount } = await C('invoices').updateOne({ _id: inv._id, businessId: req.businessId, status: 'sent', payments: inv.payments || [] }, { $push: { payments: payment }, $set: { ...(fullyPaid && { status: 'paid', paidAt: new Date() }) } });
       if (!modifiedCount) throw new HttpError(409, 'Invoice changed during matching. Refresh and retry.');
-      await C('transactions').updateOne(scoped(req, { _id }), { $set: { invoiceId: inv._id, paymentId, category: 'Client revenue', vendor: inv.customer?.name || txn.vendor, reconciliationStatus: 'matched', matchedRecordId: inv._id, matchedRecordType: 'invoice', paymentEvidence: 'user-supplied-statement', updatedAt: new Date() } });
+      await C('transactions').updateOne(scoped(req, { _id }), { $set: { invoiceId: inv._id, paymentId, category: 'Client revenue', financialClass: 'income', vendor: inv.customer?.name || txn.vendor, reconciliationStatus: 'matched', matchedRecordId: inv._id, matchedRecordType: 'invoice', paymentEvidence: 'user-supplied-statement', updatedAt: new Date() } });
     } else if (kind === 'bill') {
       if (txn.currency !== (await business(req)).currency) throw bad('Bill matching is available when the statement currency is the business currency.');
       if (txn.amountCents >= 0) throw bad('An incoming transaction cannot match a supplier bill payment');
-      const bill = await C('bills').findOne(scoped(req, { _id: targetId, status: 'unpaid' }));
-      if (!bill) throw new HttpError(404, 'Unpaid bill not found');
-      if (-txn.amountCents !== bill.amountCents) throw bad('The statement amount must equal the bill amount. Partial bill matching is not supported by the current bill model.');
-      const { modifiedCount } = await C('bills').updateOne(scoped(req, { _id: targetId, status: 'unpaid' }), { $set: { status: 'paid', paidDate: txn.date, transactionId: _id } });
+      const bill = await C('bills').findOne(scoped(req, { _id: targetId, status: { $in: ['unpaid', 'partial'] } }));
+      if (!bill) throw new HttpError(404, 'Open bill not found');
+      const payments = bill.payments || [];
+      const paidCents = payments.reduce((sum, p) => sum + p.amountCents, 0);
+      const dueCents = bill.amountCents - paidCents;
+      if (-txn.amountCents > dueCents) throw bad('This statement amount is greater than the bill balance. Match a smaller payment or review the bill.');
+      const paymentId = new ObjectId();
+      const nextStatus = -txn.amountCents === dueCents ? 'paid' : 'partial';
+      const { modifiedCount } = await C('bills').updateOne(scoped(req, { _id: targetId, status: bill.status, payments }), { $push: { payments: { id: paymentId, amountCents: -txn.amountCents, date: txn.date, method: 'Imported statement', transactionId: _id } }, $set: { status: nextStatus, ...(nextStatus === 'paid' && { paidDate: txn.date }), transactionId: _id } });
       if (!modifiedCount) throw new HttpError(409, 'Bill changed during matching. Refresh and retry.');
-      await C('transactions').updateOne(scoped(req, { _id }), { $set: { billId: targetId, category: bill.category, vendor: bill.vendor, reconciliationStatus: 'matched', matchedRecordId: targetId, matchedRecordType: 'bill', paymentEvidence: 'user-supplied-statement', updatedAt: new Date() } });
+      await C('transactions').updateOne(scoped(req, { _id }), { $set: { billId: targetId, category: bill.category, financialClass: 'expense', vendor: bill.vendor, reconciliationStatus: 'matched', matchedRecordId: targetId, matchedRecordType: 'bill', paymentEvidence: 'user-supplied-statement', updatedAt: new Date() } });
     } else if (kind === 'existing') {
       const existing = await C('transactions').findOne(scoped(req, { _id: targetId, source: { $ne: 'bank-statement' }, reconciliationStatus: { $ne: 'matched' } }));
       if (!existing || existing.amountCents !== txn.amountCents || (existing.currency || (await business(req)).currency) !== txn.currency || !dateWithin(existing.date, txn.date, 7)) throw bad('Choose an unlinked transaction with the same amount, currency, and a date within seven days.');
@@ -497,8 +541,8 @@ export function createApi(db, { secureCookies }) {
     } else {
       const target = await C('transactions').findOne(scoped(req, { _id: targetId, accountId: { $ne: txn.accountId }, source: 'bank-statement', reconciliationStatus: { $ne: 'matched' } }));
       if (!target || target.amountCents !== -txn.amountCents || target.currency !== txn.currency || !dateWithin(target.date, txn.date, 7)) throw bad('Choose an unmatched opposite transaction in another bank account with the same currency and amount within seven days.');
-      await C('transactions').updateOne(scoped(req, { _id: targetId }), { $set: { reconciliationStatus: 'matched', excludedFromTotals: true, matchedRecordId: _id, matchedRecordType: 'transfer', updatedAt: new Date() } });
-      await C('transactions').updateOne(scoped(req, { _id }), { $set: { reconciliationStatus: 'matched', excludedFromTotals: true, matchedRecordId: targetId, matchedRecordType: 'transfer', updatedAt: new Date() } });
+      await C('transactions').updateOne(scoped(req, { _id: targetId }), { $set: { financialClass: 'transfer', reconciliationStatus: 'matched', excludedFromTotals: true, matchedRecordId: _id, matchedRecordType: 'transfer', updatedAt: new Date() } });
+      await C('transactions').updateOne(scoped(req, { _id }), { $set: { financialClass: 'transfer', reconciliationStatus: 'matched', excludedFromTotals: true, matchedRecordId: targetId, matchedRecordType: 'transfer', updatedAt: new Date() } });
     }
     res.json({ ok: true, reconciliationStatus: 'matched', paymentEvidence: 'user-supplied-statement' });
   }));
@@ -516,7 +560,7 @@ export function createApi(db, { secureCookies }) {
       if (currency !== account.currency) throw bad(`Row ${i + 1} currency (${currency}) does not match the selected account (${account.currency})`);
       const reference = str(row.reference, `Row ${i + 1} reference`, { max: 120 });
       const fingerprint = createHash('sha256').update([String(account._id), dateValue, currency, reference ? `ref:${reference.toLowerCase()}` : `${amountCents}:${description.toLowerCase().replace(/\s+/g, ' ').trim()}`].join('|')).digest('hex');
-      return { date: dateValue, description, amountCents, currency, reference, runningBalanceCents: row.runningBalanceCents === null || row.runningBalanceCents === undefined || row.runningBalanceCents === '' ? null : cents(row.runningBalanceCents, `Row ${i + 1} balance`), vendor: str(row.vendor, `Row ${i + 1} vendor`, { max: 120 }), category: str(row.category, `Row ${i + 1} category`, { max: 60 }) || 'Uncategorized', fingerprint };
+      return { date: dateValue, description, amountCents, currency, reference, runningBalanceCents: row.runningBalanceCents === null || row.runningBalanceCents === undefined || row.runningBalanceCents === '' ? null : cents(row.runningBalanceCents, `Row ${i + 1} balance`), vendor: str(row.vendor, `Row ${i + 1} vendor`, { max: 120 }), category: str(row.category, `Row ${i + 1} category`, { max: 60 }) || 'Uncategorized', financialClass: 'unclassified', fingerprint };
     });
   };
   const findStatementAccount = async (req) => {
@@ -529,13 +573,13 @@ export function createApi(db, { secureCookies }) {
     const rows = statementRows(req, account);
     const found = await C('transactions').find(scoped(req, { accountId: account._id, fingerprint: { $in: rows.map((r) => r.fingerprint) } }), { projection: { fingerprint: 1 } }).toArray();
     const prior = new Set(found.map((t) => t.fingerprint));
-    const bills = await C('bills').find(scoped(req, { status: 'unpaid' })).toArray();
+    const bills = await C('bills').find(scoped(req, { status: { $in: ['unpaid', 'partial'] } })).toArray();
     const invoices = await C('invoices').find(scoped(req, { status: 'sent' })).toArray();
-    const candidates = [...bills.map((b) => ({ kind: 'bill', id: String(b._id), amountCents: -Math.abs(b.amountCents), date: b.dueDate, party: b.vendor })), ...invoices.map((inv) => ({ kind: 'invoice', id: String(inv._id), amountCents: invoiceTotals(inv).total - (inv.payments || []).reduce((s, p) => s + p.amountCents, 0), date: inv.dueDate, party: inv.customer?.name || '' }))];
+    const candidates = [...bills.map((b) => ({ kind: 'bill', id: String(b._id), amountCents: -Math.max(0, b.amountCents - (b.payments || []).reduce((s, p) => s + p.amountCents, 0)), date: b.dueDate, party: b.vendor })), ...invoices.map((inv) => ({ kind: 'invoice', id: String(inv._id), amountCents: invoiceTotals(inv).total - (inv.payments || []).reduce((s, p) => s + p.amountCents, 0), date: inv.dueDate, party: inv.customer?.name || '' }))];
     const review = rows.map((row) => {
       const duplicate = prior.has(row.fingerprint);
       prior.add(row.fingerprint);
-      const match = candidates.find((c) => c.amountCents === row.amountCents && Math.abs((Date.parse(row.date) - Date.parse(c.date)) / 86400000) <= 14 && (!row.vendor || !c.party || row.vendor.toLowerCase().includes(c.party.toLowerCase()) || c.party.toLowerCase().includes(row.vendor.toLowerCase())));
+      const match = candidates.find((c) => Math.sign(c.amountCents) === Math.sign(row.amountCents) && Math.abs(row.amountCents) <= Math.abs(c.amountCents) && Math.abs((Date.parse(row.date) - Date.parse(c.date)) / 86400000) <= 14 && (!row.vendor || !c.party || row.vendor.toLowerCase().includes(c.party.toLowerCase()) || c.party.toLowerCase().includes(row.vendor.toLowerCase())));
       return { ...row, duplicate, suggestedMatch: match ? { kind: match.kind, id: match.id, party: match.party } : null };
     });
     const openingBalanceCents = req.body.openingBalanceCents === '' || req.body.openingBalanceCents === undefined || req.body.openingBalanceCents === null ? null : cents(req.body.openingBalanceCents, 'Statement opening balance');
@@ -552,7 +596,7 @@ export function createApi(db, { secureCookies }) {
     const account = await findStatementAccount(req), review = await getStatementReview(req, account);
     const importId = new ObjectId(), importedAt = new Date();
     const rows = review.rows.filter((r) => !r.duplicate && req.body.rows.find((input) => input.date === r.date && Number(input.amountCents) === r.amountCents && input.description === r.description && input.include !== false));
-    const docs = rows.map((row) => ({ businessId: req.businessId, accountId: account._id, date: row.date, description: row.description, vendor: row.vendor, category: row.category, amountCents: row.amountCents, currency: row.currency, reference: row.reference, runningBalanceCents: row.runningBalanceCents, source: 'bank-statement', importId, fingerprint: row.fingerprint, reconciliationStatus: 'unmatched', createdAt: importedAt, updatedAt: importedAt }));
+    const docs = rows.map((row) => ({ businessId: req.businessId, accountId: account._id, date: row.date, description: row.description, vendor: row.vendor, category: row.category, financialClass: row.financialClass, amountCents: row.amountCents, currency: row.currency, reference: row.reference, runningBalanceCents: row.runningBalanceCents, source: 'bank-statement', importId, fingerprint: row.fingerprint, reconciliationStatus: 'unmatched', createdAt: importedAt, updatedAt: importedAt }));
     const session = db.client?.startSession?.();
     let transactionalImport = false;
     try {
@@ -586,6 +630,21 @@ export function createApi(db, { secureCookies }) {
     if (existing.invoiceId || existing.billId) throw bad('This transaction was created by a payment. Edit the payment on its invoice or bill instead.');
     const set = txnFields(req.body || {});
     await C('transactions').updateOne(scoped(req, { _id }), { $set: set });
+    res.json(pub({ ...existing, ...set }));
+  }));
+
+  r.patch('/bank-transactions/:id/classification', wrap(async (req, res) => {
+    const _id = oid(req.params.id);
+    const existing = await C('transactions').findOne(scoped(req, { _id, source: 'bank-statement' }));
+    if (!existing) throw new HttpError(404, 'Imported bank transaction not found');
+    if (existing.reconciliationStatus === 'matched') throw bad('Matched statement transactions inherit their classification from the linked record.');
+    const financialClass = oneOf(req.body?.financialClass, 'Financial treatment', ['income', 'expense', 'transfer', 'financing', 'owner-contribution', 'owner-withdrawal', 'refund', 'reversal', 'card-payment', 'unclassified']);
+    validateClassDirection(financialClass, existing.amountCents);
+    const category = str(req.body?.category, 'Category', { max: 60 }) || 'Uncategorized';
+    const set = { financialClass, category, updatedAt: new Date() };
+    const { modifiedCount } = await C('transactions').updateOne(scoped(req, { _id, source: 'bank-statement', reconciliationStatus: { $ne: 'matched' } }), { $set: set });
+    if (!modifiedCount) throw new HttpError(409, 'This transaction was reconciled during the update. Refresh and review the linked record.');
+    await C('financialAudit').insertOne({ businessId: req.businessId, recordId: _id, recordType: 'transaction', action: 'classification-changed', before: { financialClass: existing.financialClass || 'unclassified', category: existing.category }, after: set, createdAt: new Date() });
     res.json(pub({ ...existing, ...set }));
   }));
 
@@ -780,7 +839,11 @@ export function createApi(db, { secureCookies }) {
     if (!p) throw new HttpError(404, 'Payment not found');
     const payments = inv.payments.filter((x) => x !== p);
     await C('invoices').updateOne({ _id: inv._id, businessId: req.businessId }, { $set: { payments, status: 'sent' }, $unset: { paidAt: '' } });
-    if (p.transactionId) await C('transactions').deleteOne({ _id: p.transactionId, businessId: req.businessId });
+    if (p.transactionId) {
+      const txn = await C('transactions').findOne({ _id: p.transactionId, businessId: req.businessId });
+      if (txn?.source === 'bank-statement') await C('transactions').updateOne({ _id: p.transactionId, businessId: req.businessId }, { $set: { financialClass: 'unclassified', reconciliationStatus: 'unmatched', updatedAt: new Date() }, $unset: { invoiceId: '', paymentId: '', matchedRecordId: '', matchedRecordType: '', paymentEvidence: '' } });
+      else await C('transactions').deleteOne({ _id: p.transactionId, businessId: req.businessId });
+    }
     res.json(dec(req, { ...inv, payments, status: 'sent' }));
   }));
 
@@ -802,48 +865,66 @@ export function createApi(db, { secureCookies }) {
     issueDate: date(b.issueDate || now, 'Bill date'),
     dueDate: date(b.dueDate, 'Due date'),
   });
-  r.get('/bills', wrap(async (req, res) => res.json((await C('bills').find(scoped(req)).sort({ status: -1, dueDate: 1 }).toArray()).map(pub))));
+  r.get('/bills', wrap(async (req, res) => res.json((await C('bills').find(scoped(req)).sort({ status: -1, dueDate: 1 }).toArray()).map(decorateBill))));
   r.post('/bills', wrap(async (req, res) => {
-    const doc = { ...billFields(req.body || {}, req.today), status: 'unpaid', businessId: req.businessId, createdAt: new Date() };
+    const doc = { ...billFields(req.body || {}, req.today), status: 'unpaid', payments: [], businessId: req.businessId, createdAt: new Date() };
     const { insertedId } = await C('bills').insertOne(doc);
-    res.status(201).json(pub({ _id: insertedId, ...doc }));
+    res.status(201).json(decorateBill({ _id: insertedId, ...doc }));
   }));
   r.patch('/bills/:id', wrap(async (req, res) => {
     const _id = oid(req.params.id);
     const bill = await C('bills').findOne(scoped(req, { _id }));
     if (!bill) throw new HttpError(404, 'Bill not found');
-    if (bill.status === 'paid') throw bad('A paid bill cannot be edited. Mark it unpaid first.');
+    const paidCents = (bill.payments || []).reduce((sum, p) => sum + p.amountCents, 0);
+    if (bill.status === 'paid' || (bill.status === 'partial' && paidCents > 0)) throw bad('A bill with recorded payments cannot be edited. Remove the payments first.');
     const set = billFields(req.body || {}, req.today);
     await C('bills').updateOne(scoped(req, { _id }), { $set: set });
-    res.json(pub({ ...bill, ...set }));
+    res.json(decorateBill({ ...bill, ...set }));
   }));
   r.post('/bills/:id/pay', wrap(async (req, res) => {
     const _id = oid(req.params.id);
     const bill = await C('bills').findOne(scoped(req, { _id }));
     if (!bill) throw new HttpError(404, 'Bill not found');
-    if (bill.status === 'paid') throw bad('This bill is already paid');
+    const payments = bill.payments || [];
+    const paidCents = payments.reduce((sum, p) => sum + p.amountCents, 0);
+    const balanceDueCents = bill.status === 'paid' && !payments.length ? 0 : bill.amountCents - paidCents;
+    if (balanceDueCents <= 0) throw bad('This bill is already paid');
     const paidDate = date(req.body?.date || req.today, 'Payment date');
+    const amountCents = req.body?.amountCents === undefined && req.body?.amount === undefined ? balanceDueCents : cents(req.body.amountCents ?? req.body.amount, 'Payment amount', { min: 1 });
+    if (amountCents > balanceDueCents) throw bad('Payment exceeds the balance due');
+    const paymentId = new ObjectId();
+    const nextStatus = amountCents === balanceDueCents ? 'paid' : 'partial';
     const { insertedId } = await C('transactions').insertOne({
       businessId: req.businessId, date: paidDate, description: bill.description || `Bill · ${bill.vendor}`, vendor: bill.vendor,
-      category: bill.category, amountCents: -bill.amountCents, notes: '', billId: _id, source: 'bill-payment', createdAt: new Date(),
+      category: bill.category, financialClass: 'expense', amountCents: -amountCents, notes: '', billId: _id, paymentId, source: 'bill-payment', createdAt: new Date(),
     });
-    const { modifiedCount } = await C('bills').updateOne(scoped(req, { _id, status: 'unpaid' }), { $set: { status: 'paid', paidDate, transactionId: insertedId } });
+    const payment = { id: paymentId, amountCents, date: paidDate, method: 'Manual', transactionId: insertedId };
+    const { modifiedCount } = await C('bills').updateOne(scoped(req, { _id, status: bill.status, payments }), { $push: { payments: payment }, $set: { status: nextStatus, ...(nextStatus === 'paid' && { paidDate }), transactionId: insertedId } });
     if (!modifiedCount) { await C('transactions').deleteOne({ _id: insertedId }); throw new HttpError(409, 'The bill changed. Refresh and try again.'); }
-    res.json(pub({ ...bill, status: 'paid', paidDate, transactionId: String(insertedId) }));
+    res.json(decorateBill({ ...bill, status: nextStatus, payments: [...payments, payment], ...(nextStatus === 'paid' && { paidDate }), transactionId: insertedId }));
   }));
   r.post('/bills/:id/unpay', wrap(async (req, res) => {
     const _id = oid(req.params.id);
     const bill = await C('bills').findOne(scoped(req, { _id, status: 'paid' }));
     if (!bill) throw new HttpError(404, 'Paid bill not found');
-    if (bill.transactionId) await C('transactions').deleteOne({ _id: bill.transactionId, businessId: req.businessId });
-    await C('bills').updateOne(scoped(req, { _id }), { $set: { status: 'unpaid' }, $unset: { paidDate: '', transactionId: '' } });
-    res.json(pub({ ...bill, status: 'unpaid', paidDate: undefined, transactionId: undefined }));
+    const payments = bill.payments || [];
+    const txns = payments.map((p) => p.transactionId).filter(Boolean);
+    if (!txns.length && bill.transactionId) txns.push(bill.transactionId);
+    if (txns.length) {
+      const paymentTransactions = await C('transactions').find({ _id: { $in: txns }, businessId: req.businessId }).toArray();
+      for (const txn of paymentTransactions) {
+        if (txn.source === 'bank-statement') await C('transactions').updateOne({ _id: txn._id, businessId: req.businessId }, { $set: { financialClass: 'unclassified', reconciliationStatus: 'unmatched', updatedAt: new Date() }, $unset: { billId: '', paymentId: '', matchedRecordId: '', matchedRecordType: '', paymentEvidence: '' } });
+        else await C('transactions').deleteOne({ _id: txn._id, businessId: req.businessId });
+      }
+    }
+    await C('bills').updateOne(scoped(req, { _id }), { $set: { status: 'unpaid', payments: [] }, $unset: { paidDate: '', transactionId: '' } });
+    res.json(decorateBill({ ...bill, status: 'unpaid', payments: [], paidDate: undefined, transactionId: undefined }));
   }));
   r.delete('/bills/:id', wrap(async (req, res) => {
     const _id = oid(req.params.id);
     const bill = await C('bills').findOne(scoped(req, { _id }));
     if (!bill) throw new HttpError(404, 'Bill not found');
-    if (bill.status === 'paid') throw bad('Mark the bill unpaid before deleting it');
+    if (bill.status === 'paid' || bill.status === 'partial') throw bad('Remove recorded payments before deleting this bill');
     await C('bills').deleteOne(scoped(req, { _id }));
     res.json({ ok: true });
   }));
@@ -858,7 +939,7 @@ export function createApi(db, { secureCookies }) {
       C('invoices').find(scoped(req)).toArray(),
       C('bills').find(scoped(req)).toArray(),
     ]);
-    return { txns, invoices: invoices.map((i) => decorateInvoice(i, now)), bills, biz, now };
+    return { txns, invoices: invoices.map((i) => decorateInvoice(i, now)), bills: bills.map(decorateBill), biz, now };
   };
   const range = (req, now) => {
     const to = req.query.to ? date(req.query.to, 'To') : now;
@@ -874,10 +955,10 @@ export function createApi(db, { secureCookies }) {
     const months = A.monthsBack(now, 12);
     const open = invoices.filter((i) => ['sent', 'partial', 'overdue'].includes(i.displayStatus));
     const overdue = open.filter((i) => i.displayStatus === 'overdue');
-    const unpaidBills = bills.filter((b) => b.status === 'unpaid');
+    const unpaidBills = bills.filter((b) => b.status !== 'paid');
     const plannedItems = await C('planningItems').find(scoped(req)).toArray();
     const plan = A.cashflow({ txns, invoices: [], bills, plannedItems, business: biz, today: now });
-    const monthlySpend = txns.filter((t) => t.amountCents < 0 && t.date.slice(0, 7) === now.slice(0, 7)).reduce((s, t) => s - t.amountCents, 0);
+    const monthlySpend = A.spending(txns, `${now.slice(0, 7)}-01`, now).total;
     const balanceAt = (count) => {
       if (!biz.openingBalanceDate) return null;
       const movements = plan.weeks.slice(0, count).reduce((s, w) => s + w.inflows - w.outflows, 0);
@@ -897,11 +978,11 @@ export function createApi(db, { secureCookies }) {
       hasOpeningBalance: Boolean(biz.openingBalanceDate),
       monthly: A.monthlySeries(txns, months),
       receivables: { outstanding: open.reduce((s, i) => s + i.balanceDue, 0), count: open.length, overdue: overdue.reduce((s, i) => s + i.balanceDue, 0), overdueCount: overdue.length },
-      payables: { outstanding: unpaidBills.reduce((s, b) => s + b.amountCents, 0), count: unpaidBills.length, dueSoon: unpaidBills.filter((b) => b.dueDate <= addDays(now, 7)).map(pub).slice(0, 6) },
+      payables: { outstanding: unpaidBills.reduce((s, b) => s + b.balanceDueCents, 0), count: unpaidBills.length, dueSoon: unpaidBills.filter((b) => b.dueDate <= addDays(now, 7)).slice(0, 6) },
       aging: A.aging(invoices, now),
       upcomingInvoices: open.sort((a, b) => a.dueDate.localeCompare(b.dueDate)).slice(0, 6),
       recent: txns.sort((a, b) => b.date.localeCompare(a.date)).slice(0, 8).map(pub),
-      counts: { transactions: txns.length, invoices: invoices.length, bills: bills.length },
+      counts: { transactions: txns.length, invoices: invoices.length, bills: bills.length, unclassified: txns.filter((t) => A.transactionClass(t) === 'unclassified').length },
       financialPlan: {
         monthlyBudgetCents: biz.monthlyBudgetCents ?? null,
         monthlySpend,

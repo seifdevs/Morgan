@@ -1,7 +1,7 @@
 import { useState } from 'react';
-import { Link, useNavigate, useSearchParams } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import { Delta, ErrorBox, Icon, PageHeader, RangeSelect, Skeleton, StatusBadge } from '../../components/ui';
-import { ChartFrame, FlowBars, LineChart, StackBar } from '../../components/charts/charts';
+import { LineChart } from '../../components/charts/charts';
 import { EmptyState } from '../../components/illustrations/Illustrations';
 import type { Overview as OverviewData } from '../../lib/api';
 import { useAuth } from '../../lib/auth';
@@ -19,7 +19,6 @@ export default function Overview() {
   useDocumentTitle('Overview');
   const { business } = useAuth();
   const money = useMoney();
-  const nav = useNavigate();
   const [range, setRange] = useState<RangeKey>('month');
   const { from, to } = rangeDates(range);
   const balanceAgeDays = business?.openingBalanceDate ? Math.max(0, Math.floor((Date.parse(`${new Date().toISOString().slice(0, 10)}T00:00:00Z`) - Date.parse(`${business.openingBalanceDate}T00:00:00Z`)) / 86400000)) : null;
@@ -49,6 +48,7 @@ export default function Overview() {
       )}
       {data && (
         <>
+          {data.counts.unclassified > 0 && <div className="callout info" style={{ marginBottom: 18 }}><Icon name="alert" size={16} /><span>{data.counts.unclassified} imported bank movement{data.counts.unclassified === 1 ? '' : 's'} still need financial classification. They affect recorded cash, but stay out of income and expense reports until reviewed.</span><Link className="link" to="/app/transactions">Review transactions <Icon name="arrowRight" size={14} /></Link></div>}
           {data.hasOpeningBalance && balanceAgeDays !== null && balanceAgeDays > 30 && <div className="callout info" style={{ marginBottom: 18 }}><Icon name="calendar" size={16} /><span>Your cash starting balance was last entered {balanceAgeDays} days ago ({formatDate(business!.openingBalanceDate!)}). Update it if the accounts have changed since then.</span></div>}
           {steps.some((s) => !s.done) && (
             <section className="panel onboard">
@@ -116,12 +116,6 @@ export default function Overview() {
 
           <div className="grid main-side">
             <div className="stack">
-              <ChartFrame title="Income & expenses by month" aside={<span className="muted" style={{ fontSize: 12.5 }}>Last 12 months · click a month to see its transactions</span>}>
-                {data.monthly.some((m) => m.income || m.expenses) ? (
-                  <FlowBars rows={data.monthly.map((m) => ({ ...m, label: formatMonth(m.month) }))} format={(v) => money(v, { compact: true })}
-                    onSelect={(i) => { const m = data.monthly[i].month; const [y, mo] = m.split('-').map(Number); nav(`/app/transactions?from=${m}-01&to=${new Date(Date.UTC(y, mo, 0)).toISOString().slice(0, 10)}`); }} />
-                ) : <EmptyState kind="chart" title="No activity yet">Add transactions to see monthly income and expenses.</EmptyState>}
-              </ChartFrame>
             <section className="panel">
               <div className="panel-head"><h2>Recent transactions</h2><Link className="link" to="/app/transactions">View all</Link></div>
               <div style={{ paddingTop: 8 }}>
@@ -142,12 +136,6 @@ export default function Overview() {
             </section>
             </div>
             <div className="stack">
-              <section className="panel">
-                <div className="panel-head"><h2>Receivables aging</h2><Link className="link" to="/app/receivables">View all</Link></div>
-                <div className="panel-body">
-                  <StackBar format={money} parts={data.aging.map((a, i) => ({ label: a.label, amount: a.amount, count: a.count, color: ['#2f9b70', '#d6a84f', '#c98a4f', '#c66d5d', '#a04848'][i] }))} />
-                </div>
-              </section>
               <section className="panel">
                 <div className="panel-head"><h2>Invoices due next</h2><Link className="link" to="/app/invoices">All invoices</Link></div>
                 <div style={{ paddingTop: 12 }}>
@@ -181,7 +169,7 @@ export default function Overview() {
             </div>
           </div>
 
-          <p className="chart-note">Recorded activity as of {formatMonthYear(to.slice(0, 7))}. Cash outlook is a separate estimate using saved plans and unpaid bills; open invoices are not included as cash by default.</p>
+          <p className="chart-note">Recorded activity as of {formatMonthYear(to.slice(0, 7))}. Months without statement coverage may be incomplete. Cash outlook is a separate estimate using saved plans and unpaid bills; open invoices are not included as cash by default.</p>
         </>
       )}
     </>

@@ -6,6 +6,16 @@ const daysBetween = (a, b) => Math.round((Date.parse(b + 'T00:00:00Z') - Date.pa
 const inRange = (d, from, to) => d >= from && d <= to;
 const fd = (d) => new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC' }).format(new Date(d + 'T00:00:00Z'));
 
+// A bank movement is not automatically revenue or an operating expense.
+// Keep legacy manual records' sign-based meaning; raw statement rows need review.
+export function transactionClass(t) {
+  if (t.financialClass) return t.financialClass;
+  if (t.invoiceId) return 'income';
+  if (t.billId) return 'expense';
+  if (t.matchedRecordType === 'transfer') return 'transfer';
+  return t.source === 'bank-statement' ? 'unclassified' : (t.amountCents >= 0 ? 'income' : 'expense');
+}
+
 export function monthsBack(today, n) {
   const [y, m] = today.split('-').map(Number);
   const out = [];
@@ -30,12 +40,16 @@ export function cashBalance(txns, business, asOf) {
 }
 
 export function totals(txns, from, to) {
-  let income = 0, expenses = 0;
+  let income = 0, expenses = 0, net = 0;
   for (const t of txns) {
     if (!inRange(t.date, from, to)) continue;
-    if (t.amountCents >= 0) income += t.amountCents; else expenses += -t.amountCents;
+    const cls = transactionClass(t);
+    if (cls === 'income') income += Math.max(0, t.amountCents);
+    if (cls === 'expense') expenses += Math.max(0, -t.amountCents);
+    if (cls === 'refund') expenses -= Math.max(0, t.amountCents);
+    net += t.amountCents;
   }
-  return { income, expenses, net: income - expenses };
+  return { income, expenses, net, operatingNet: income - expenses };
 }
 
 export function monthlySeries(txns, months) {
@@ -43,7 +57,10 @@ export function monthlySeries(txns, months) {
   for (const t of txns) {
     const r = map[month(t.date)];
     if (!r) continue;
-    if (t.amountCents >= 0) r.income += t.amountCents; else r.expenses += -t.amountCents;
+    const cls = transactionClass(t);
+    if (cls === 'income') r.income += Math.max(0, t.amountCents);
+    if (cls === 'expense') r.expenses += Math.max(0, -t.amountCents);
+    if (cls === 'refund') r.expenses -= Math.max(0, t.amountCents);
     r.net += t.amountCents;
   }
   return months.map((m) => map[m]);
@@ -79,8 +96,8 @@ function groupSum(txns, keyFn) {
 
 export function spending(txns, from, to) {
   const prior = priorPeriod(from, to);
-  const cur = txns.filter((t) => t.amountCents < 0 && inRange(t.date, from, to));
-  const prev = txns.filter((t) => t.amountCents < 0 && inRange(t.date, prior.from, prior.to));
+  const cur = txns.filter((t) => ['expense', 'refund'].includes(transactionClass(t)) && inRange(t.date, from, to));
+  const prev = txns.filter((t) => ['expense', 'refund'].includes(transactionClass(t)) && inRange(t.date, prior.from, prior.to));
   const merge = (keyFn) => {
     const a = groupSum(cur, keyFn), b = groupSum(prev, keyFn);
     const keys = new Set([...a.keys(), ...b.keys()]);
@@ -105,7 +122,7 @@ export function recurringCharges(txns, today) {
   const since = addDays(today, -185);
   const byVendor = new Map();
   for (const t of txns) {
-    if (t.amountCents >= 0 || t.date < since || !t.vendor) continue;
+    if (transactionClass(t) !== 'expense' || t.amountCents >= 0 || t.date < since || !t.vendor) continue;
     const k = t.vendor.toLowerCase();
     (byVendor.get(k) || byVendor.set(k, []).get(k)).push(t);
   }
@@ -131,7 +148,7 @@ export function insights({ txns, invoices, bills, today, currencyFmt }) {
   const f = currencyFmt;
 
   // 1. Possible duplicate charges: same vendor/description and amount within 3 days.
-  const expenses = txns.filter((t) => t.amountCents < 0).sort((a, b) => a.date.localeCompare(b.date));
+  const expenses = txns.filter((t) => transactionClass(t) === 'expense' && t.amountCents < 0).sort((a, b) => a.date.localeCompare(b.date));
   const seen = new Set();
   for (let i = 0; i < expenses.length; i++) {
     for (let j = i + 1; j < expenses.length && daysBetween(expenses[i].date, expenses[j].date) <= 3; j++) {
@@ -197,9 +214,9 @@ export function insights({ txns, invoices, bills, today, currencyFmt }) {
   }
 
   // 5. Overdue bills (late fees risk).
-  const lateBills = bills.filter((b) => b.status === 'unpaid' && b.dueDate < today);
+  const lateBills = bills.filter((b) => ['unpaid', 'partial'].includes(b.status) && b.dueDate < today);
   if (lateBills.length) {
-    const amt = lateBills.reduce((s, b) => s + b.amountCents, 0);
+    const amt = lateBills.reduce((s, b) => s + (b.balanceDueCents ?? b.amountCents), 0);
     out.push({
       id: 'late-bills', kind: 'late-bills', severity: 'medium',
       title: `${lateBills.length} bill${lateBills.length > 1 ? 's' : ''} past due — ${f(amt)}`,
@@ -246,11 +263,13 @@ export function cashflow({ txns, invoices, bills, plannedItems = [], business, t
     w.items.push({ type: 'invoice', id: inv.id, label: `${inv.number} · ${inv.customer.name}`, amountCents: inv.balanceDue, date: inv.dueDate, overdue: inv.dueDate < today });
   }
   for (const b of bills) {
-    if (b.status !== 'unpaid' || b.dueDate > horizonEnd) continue;
+    if (!['unpaid', 'partial'].includes(b.status) || b.dueDate > horizonEnd) continue;
+    const dueCents = b.balanceDueCents ?? b.amountCents;
+    if (dueCents <= 0) continue;
     const w = rows[place(b.dueDate)];
-    w.outflows += b.amountCents;
-    if (b.dueDate < today) overdueOut += b.amountCents;
-    w.items.push({ type: 'bill', id: String(b._id), label: b.vendor, amountCents: -b.amountCents, date: b.dueDate, overdue: b.dueDate < today });
+    w.outflows += dueCents;
+    if (b.dueDate < today) overdueOut += dueCents;
+    w.items.push({ type: 'bill', id: String(b._id), label: b.vendor, amountCents: -dueCents, date: b.dueDate, overdue: b.dueDate < today });
   }
   for (const item of plannedItems) {
     // Invoiced expectations belong to the receivables ledger, avoiding a second forecast entry.
@@ -283,11 +302,13 @@ export function profitAndLoss(txns, year) {
   const rows = new Map();
   for (const t of txns) {
     if (!t.date.startsWith(String(year))) continue;
-    const type = t.amountCents >= 0 ? 'income' : 'expense';
+    const type = transactionClass(t) === 'refund' ? 'expense' : transactionClass(t);
+    if (type !== 'income' && type !== 'expense') continue;
     const key = `${type}:${t.category || 'Uncategorized'}`;
     const r = rows.get(key) || { type, category: t.category || 'Uncategorized', months: new Array(12).fill(0), total: 0 };
     const i = Number(t.date.slice(5, 7)) - 1;
-    r.months[i] += Math.abs(t.amountCents); r.total += Math.abs(t.amountCents);
+    const amount = type === 'expense' && transactionClass(t) === 'refund' ? -Math.abs(t.amountCents) : Math.abs(t.amountCents);
+    r.months[i] += amount; r.total += amount;
     rows.set(key, r);
   }
   const list = [...rows.values()].sort((a, b) => b.total - a.total);

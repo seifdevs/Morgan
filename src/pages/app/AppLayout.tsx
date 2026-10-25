@@ -5,22 +5,20 @@ import { useAuth } from '../../lib/auth';
 
 const nav: { group?: string; items: { to: string; label: string; icon: string; end?: boolean }[] }[] = [
   { items: [{ to: '/app', label: 'Overview', icon: 'overview', end: true }] },
-  { group: 'Analyze', items: [
-    { to: '/app/spending', label: 'Spending', icon: 'pie' },
+  { group: 'Money', items: [
     { to: '/app/transactions', label: 'Transactions', icon: 'transfer' },
-    { to: '/app/bank-accounts', label: 'Bank accounts', icon: 'cash' },
-    { to: '/app/insights', label: 'Cost insights', icon: 'spark' },
-  ] },
-  { group: 'Billing', items: [
     { to: '/app/invoices', label: 'Invoices', icon: 'document' },
     { to: '/app/receivables', label: 'Receivables', icon: 'receivable' },
     { to: '/app/bills', label: 'Bills', icon: 'payable' },
     { to: '/app/customers', label: 'Customers', icon: 'users' },
   ] },
-  { group: 'Plan', items: [
+  { group: 'Insights', items: [
+    { to: '/app/spending', label: 'Spending', icon: 'pie' },
     { to: '/app/cashflow', label: 'Cash flow', icon: 'trend' },
     { to: '/app/reports', label: 'Reports', icon: 'report' },
+    { to: '/app/insights', label: 'Cost insights', icon: 'spark' },
   ] },
+  { group: 'Settings', items: [{ to: '/app/bank-accounts', label: 'Bank accounts', icon: 'cash' }] },
 ];
 
 /** Legacy /logout URL: ends the session server-side, then returns to the login screen. */

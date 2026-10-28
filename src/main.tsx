@@ -10,8 +10,8 @@ import { RenderBoundary } from './components/RenderBoundary';
 import { PublicLayout } from './pages/public/PublicLayout';
 import Home from './pages/public/Home';
 import { About, Contact, Faq, Features, NotFound, Pricing, ResourceDetail, Resources } from './pages/public/Pages';
-import { Auth, ForgotPassword, ResetPassword } from './pages/public/Auth';
-import { Logout, RequireAuth } from './pages/app/AppLayout';
+import { Auth, ForgotPassword, ResetPassword, VerifyEmail } from './pages/public/Auth';
+import { Logout, RequireAdminRoute, RequireAuth } from './pages/app/AppLayout';
 import './styles/base.css';
 import './styles/public.css';
 import './styles/home.css';
@@ -36,6 +36,7 @@ const CashFlow = lazy(() => import('./pages/app/Planning').then((m) => ({ defaul
 const Reports = lazy(() => import('./pages/app/Planning').then((m) => ({ default: m.Reports })));
 const Settings = lazy(() => import('./pages/app/Settings'));
 const FinancialOnboarding = lazy(() => import('./pages/app/FinancialOnboarding'));
+const Admin = lazy(() => import('./pages/app/Admin'));
 
 const page = (el: React.ReactNode) => <Suspense fallback={<div className="panel"><LoadingRows rows={6} /></div>}>{el}</Suspense>;
 
@@ -66,6 +67,8 @@ createRoot(document.getElementById('root')!).render(
             <Route path="logout" element={<Logout />} />
             <Route path="forgot-password" element={<ForgotPassword />} />
             <Route path="reset-password" element={<ResetPassword />} />
+            <Route path="verify-email" element={<VerifyEmail />} />
+            <Route path="admin" element={<RequireAdminRoute>{page(<Admin />)}</RequireAdminRoute>} />
             <Route path="app" element={<RequireAuth />}>
               <Route path="onboarding" element={page(<FinancialOnboarding />)} />
               <Route index element={page(<Overview />)} />

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import { Navigate, NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { Icon, Marker, Wordmark, useToast } from '../../components/ui';
 import { useAuth } from '../../lib/auth';
@@ -80,6 +80,7 @@ function AppLayout() {
           ))}
         </nav>
         <div className="sb-foot">
+          {user?.role === 'admin' && <NavLink to="/admin"><Icon name="settings" size={17} /><span>Admin</span></NavLink>}
           <NavLink to="/app/settings">{({ isActive }) => <>{isActive && <Marker id="sb-marker" className="sb-marker" />}<Icon name="settings" size={17} /><span>Settings</span></>}</NavLink>
           <button onClick={signOut}><Icon name="logout" size={17} /><span>Log out</span></button>
         </div>
@@ -87,4 +88,13 @@ function AppLayout() {
       <main className="main" id="main"><div className="route" key={loc.pathname}><Outlet /></div></main>
     </div>
   );
+}
+
+export function RequireAdminRoute({ children }: { children: ReactNode }) {
+  const { user, loading } = useAuth();
+  const loc = useLocation();
+  if (loading) return <div className="boot" aria-busy="true"><span className="wordmark">mor<span>gan</span></span><span className="boot-bar" /></div>;
+  if (!user) return <Navigate to="/login" replace state={{ from: loc.pathname + loc.search }} />;
+  if (user.role !== 'admin') return <Navigate to="/app" replace />;
+  return <>{children}</>;
 }

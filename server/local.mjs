@@ -10,6 +10,6 @@ const { MongoMemoryServer } = await import('mongodb-memory-server');
 
 const dbPath = fileURLToPath(new URL('../.data/mongo', import.meta.url));
 mkdirSync(dbPath, { recursive: true });
-const mongod = await MongoMemoryServer.create({ instance: { dbPath, storageEngine: 'wiredTiger', port: 27019 } });
+const mongod = await MongoMemoryServer.create({ instance: { dbPath, storageEngine: 'wiredTiger' } });
 console.log('Local MongoDB at', mongod.getUri(), '(data in .data/mongo — not Atlas)');
 await start({ uri: mongod.getUri(), dbName: 'morgan' });

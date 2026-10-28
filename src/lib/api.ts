@@ -32,7 +32,7 @@ export async function api<T = unknown>(path: string, opts: { method?: string; bo
 }
 
 /* ---------- Types mirrored from the API ---------- */
-export type User = { id: string; name: string; email: string; createdAt: string };
+export type User = { id: string; name: string; email: string; role?: 'admin' | 'user'; createdAt: string };
 export type Business = {
   id: string; name: string; currency: string; address: string; email: string; invoicePrefix: string;
   defaultTaxRateBps: number; paymentTermsDays: number; openingBalanceCents: number; openingBalanceDate: string | null; timezone: string;

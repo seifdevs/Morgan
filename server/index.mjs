@@ -18,10 +18,13 @@ export function checkEnv(env, { uri }) {
   if (!!env.RESEND_API_KEY !== !!env.MAIL_FROM) problems.push('Set both RESEND_API_KEY and MAIL_FROM to enable email, or neither');
   if (env.TRUST_PROXY && !['0', '1'].includes(env.TRUST_PROXY)) problems.push('TRUST_PROXY must be 0 or 1');
   if (env.APP_URL && !/^https?:\/\/[^/\s]+$/.test(env.APP_URL.replace(/\/$/, ''))) problems.push('APP_URL must be the public site origin, e.g. https://app.example.com');
+  if (env.MORGAN_ADMIN_EMAIL && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(env.MORGAN_ADMIN_EMAIL.trim())) problems.push('MORGAN_ADMIN_EMAIL must be a valid email address');
   return problems;
 }
 
 export async function start({ uri = process.env.MONGODB_URI, dbName = process.env.MONGODB_DB || 'morgan' } = {}) {
+  // Mail development fallbacks are enabled only from this resolved server mode.
+  process.env.MORGAN_RUNTIME_MODE = prod ? 'production' : 'development';
   const problems = checkEnv(process.env, { uri });
   if (problems.length) {
     console.error('Configuration error:\n- ' + problems.join('\n- '));
@@ -36,6 +39,11 @@ export async function start({ uri = process.env.MONGODB_URI, dbName = process.en
     console.error('Check MONGODB_URI, the database user\'s password, and that this machine\'s IP is on the Atlas access list.');
     process.exit(1);
   }
+  // Accounts created before verification existed have no verification state. Preserve those
+  // existing workspaces during rollout; all new registrations start false and must verify.
+  await db.collection('users').updateMany({ emailVerified: { $exists: false } }, { $set: { emailVerified: true, emailVerificationLegacy: true } });
+  const adminEmail = String(process.env.MORGAN_ADMIN_EMAIL || '').trim().toLowerCase();
+  if (adminEmail) await db.collection('users').updateOne({ email: adminEmail }, { $set: { role: 'admin' } });
   const app = createApp(db, { secureCookies: prod, trustProxy: process.env.TRUST_PROXY === '1', csp: prod });
 
   if (prod) {

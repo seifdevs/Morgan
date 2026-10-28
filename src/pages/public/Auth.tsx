@@ -1,4 +1,4 @@
-import { useState, type FormEvent, type ReactNode } from 'react';
+import { useEffect, useState, type FormEvent, type ReactNode } from 'react';
 import { Link, Navigate, useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { Icon, Wordmark } from '../../components/ui';
 import { LedgerCover, LedgerTape } from '../../components/illustrations/Illustrations';
@@ -64,6 +64,10 @@ export function Auth({ mode }: { mode: 'login' | 'signup' }) {
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
   const [dest, setDest] = useState<string | null>(null);
+  const [verificationEmail, setVerificationEmail] = useState('');
+  const [verificationEmailStatus, setVerificationEmailStatus] = useState<'accepted' | 'rejected' | 'failed' | 'unknown'>('unknown');
+  const [verificationEmailMessage, setVerificationEmailMessage] = useState('');
+  const [verificationEmailRetryable, setVerificationEmailRetryable] = useState(true);
   const [form, setForm] = useState({ name: '', businessName: '', currency: 'USD', password: '' });
   const set = (k: keyof typeof form) => (v: string) => setForm((f) => ({ ...f, [k]: v }));
 
@@ -77,7 +81,9 @@ export function Auth({ mode }: { mode: 'login' | 'signup' }) {
     if (signup && !rules(f.password).slice(0, 3).every((r) => r.ok)) { setError('Password needs 10+ characters, a letter and a number'); return; }
     setBusy(true);
     try {
-      const res = await api<{ user: User; business: Business }>(signup ? '/auth/register' : '/auth/login', { method: 'POST', body: { ...f, timezone: Intl.DateTimeFormat().resolvedOptions().timeZone } });
+      const res = await api<{ user?: User; business?: Business; verificationRequired?: boolean; email?: string; emailStatus?: 'accepted' | 'rejected' | 'failed' | 'unknown'; emailMessage?: string; emailRetryable?: boolean }>(signup ? '/auth/register' : '/auth/login', { method: 'POST', body: { ...f, timezone: Intl.DateTimeFormat().resolvedOptions().timeZone } });
+      if (res.verificationRequired) { setVerificationEmail(res.email || f.email); setVerificationEmailStatus(res.emailStatus || 'unknown'); setVerificationEmailMessage(res.emailMessage || ''); setVerificationEmailRetryable(res.emailRetryable !== false); setBusy(false); return; }
+      if (!res.user || !res.business) throw new Error('The server returned an incomplete sign-in response.');
       setDest(signup ? '/app/onboarding' : next);
       setSession({ user: res.user, business: res.business });
     } catch (err) {
@@ -89,12 +95,14 @@ export function Auth({ mode }: { mode: 'login' | 'signup' }) {
   const strength = rules(form.password).filter((r) => r.ok).length;
   const step = !form.name || !form.businessName ? 0 : strength < 3 ? 1 : 2;
 
+  if (signup && verificationEmail) return <AuthShell kind="signup" stage={<LoginStage headline={<>One last<br /><span>step.</span></>} sub="Verify your email to secure your Morgan workspace." />}><div className="auth-form"><h1>{verificationEmailStatus === 'accepted' ? 'Check your inbox' : 'Your account is saved'}</h1><p className={verificationEmailStatus === 'accepted' ? 'muted' : 'form-error'} role="status">{verificationEmailMessage || 'Verification email delivery is temporarily unavailable. Your account is saved; retry sending the link.'} <b>{verificationEmail}</b> {verificationEmailStatus === 'accepted' && 'The link expires in 24 hours.'}</p><p className="auth-switch"><Link className="link" to={`/verify-email`}>Already have a link? Verify email</Link></p>{verificationEmailRetryable ? <p className="auth-switch">{verificationEmailStatus === 'accepted' ? 'Need a fresh message?' : 'Retry verification email delivery:'} <ResendVerification initialEmail={verificationEmail} /></p> : <p className="muted">An administrator must restore email sending before another request can be made.</p>}</div></AuthShell>;
+
   if (!signup) {
     return (
       <AuthShell kind="login" stage={<LoginStage headline={<>Welcome<br /><span>back.</span></>} sub="Your ledger is exactly where you left it — every figure tied to the record behind it." />}>
         <form className="auth-form" onSubmit={submit}>
           <h1>Open your ledger</h1>
-          {error && <div className="form-error" role="alert">{error}</div>}
+          {error && <div className="form-error" role="alert">{error}{error.includes('Verify your email') && <> <Link className="link" to="/verify-email">Resend verification</Link></>}</div>}
           <div className="field"><label htmlFor="email">Email</label><input className="input" id="email" name="email" type="email" autoComplete="email" required autoFocus /></div>
           <PasswordField id="password" name="password" label="Password" autoComplete="current-password" />
           {passwordResetAvailable && <Link className="link" style={{ justifySelf: 'start', fontSize: 13 }} to="/forgot-password">Forgot password?</Link>}
@@ -136,6 +144,39 @@ export function Auth({ mode }: { mode: 'login' | 'signup' }) {
   );
 }
 
+function ResendVerification({ initialEmail = '' }: { initialEmail?: string }) {
+  const [emailValue, setEmailValue] = useState(initialEmail);
+  const [status, setStatus] = useState('');
+  const [error, setError] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [canRetry, setCanRetry] = useState(true);
+  async function submit(e: FormEvent) {
+    e.preventDefault(); setBusy(true); setError(''); setStatus('');
+    try {
+      const result = await api<{ emailStatus: 'accepted' | 'rejected' | 'failed' | 'unknown'; emailMessage?: string; retryable?: boolean }>('/auth/resend-verification', { method: 'POST', body: { email: emailValue } });
+      setStatus(result.emailMessage || (result.emailStatus === 'accepted' ? 'Resend accepted the verification request. Inbox delivery is not confirmed.' : result.emailStatus === 'unknown' ? 'If that address has an unverified account, a request may be processed.' : 'Verification email delivery is temporarily unavailable. You can retry later.'));
+      if (result.emailStatus === 'rejected' || result.emailStatus === 'failed') setCanRetry(Boolean(result.retryable));
+    } catch (err) { setError((err as Error).message); }
+    finally { setBusy(false); }
+  }
+  return <form className="form-grid" onSubmit={submit}><label className="sr-only" htmlFor="resend-email">Email address</label><input className="input" id="resend-email" type="email" required value={emailValue} onChange={(e) => setEmailValue(e.target.value)} placeholder="Email address" />{error && <span className="form-error" role="alert">{error}</span>}{status && <span className="muted" role="status">{status}</span>}{canRetry && <button className="btn outline" disabled={busy}>{busy ? 'Requesting…' : 'Resend verification email'}</button>}</form>;
+}
+
+export function VerifyEmail() {
+  useDocumentTitle('Verify your email');
+  const [params] = useSearchParams();
+  const token = params.get('token') || '';
+  const [state, setState] = useState<'busy' | 'verified' | 'error'>(token ? 'busy' : 'error');
+  const [message, setMessage] = useState('');
+  useEffect(() => {
+    if (!token) { setMessage('This link is missing its verification token. Request a fresh one below.'); return; }
+    api<{ welcomeEmail: { status: string } }>('/auth/verify-email', { method: 'POST', body: { token } })
+      .then((result) => { setState('verified'); setMessage(result.welcomeEmail.status === 'accepted' ? 'Your address is verified. Resend accepted the welcome email request; inbox delivery is not confirmed.' : result.welcomeEmail.status === 'rejected' ? 'Your address is verified. Resend rejected the welcome email request.' : result.welcomeEmail.status === 'unknown' ? 'Your address is verified. Morgan could not confirm whether the welcome email was accepted.' : 'Your address is verified. The welcome email could not be sent.'); })
+      .catch((err) => { setState('error'); setMessage((err as Error).message); });
+  }, [token]);
+  return <AuthShell kind="login" stage={<LoginStage headline={<>Your email,<br /><span>secured.</span></>} sub="Email verification helps protect access to your Morgan workspace." />}><div className="auth-form"><h1>{state === 'busy' ? 'Verifying your email…' : state === 'verified' ? 'Email verified' : 'Verification needed'}</h1>{message && <div className={state === 'verified' ? 'auth-success' : 'form-error'} role="status">{message}</div>}{state === 'verified' ? <p className="auth-switch"><Link className="link" to="/login">Continue to log in</Link></p> : <><p className="muted">Verification links expire after 24 hours and work once. A duplicate or expired link needs a new message.</p><ResendVerification /></>}</div></AuthShell>;
+}
+
 export function ForgotPassword() {
   useDocumentTitle('Reset password');
   const { passwordResetAvailable, loading } = useAuth();
@@ -154,7 +195,7 @@ export function ForgotPassword() {
         {!loading && !passwordResetAvailable ? (
           <div className="callout"><span>Password reset by email isn’t configured on this server. If you’re signed in elsewhere, change your password in Settings; otherwise contact the workspace administrator.</span></div>
         ) : state === 'sent' ? (
-          <div className="auth-success" role="status"><b>Check your inbox.</b><span className="muted">If an account exists for that address, a reset link is on its way. It expires in 30 minutes.</span></div>
+          <div className="auth-success" role="status"><b>Reset request processed.</b><span className="muted">If an account exists for that address, Morgan processed the request. Email acceptance and inbox delivery are not confirmed. A reset link, if sent, expires in 30 minutes. You can request another link if needed.</span></div>
         ) : (
           <form className="form-grid" onSubmit={submit}>
             {error && <div className="form-error" role="alert">{error}</div>}

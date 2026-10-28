@@ -414,3 +414,8 @@ a.list-row:hover { background: #ffffff05; }
 .coverage-mark.complete { color:var(--green); }
 .coverage-mark.partial { color:var(--amber); }
 @media(max-width:700px) { .report-coverage details>summary { align-items:flex-start; flex-direction:column; } }
+.admin-metrics { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; margin: 24px 0; }
+.admin-metric { display: grid; gap: 12px; min-height: 112px; align-content: space-between; }
+.admin-metric strong { color: var(--text, #f4f6f8); font-size: 30px; font-variant-numeric: tabular-nums; }
+@media (max-width: 760px) { .admin-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 420px) { .admin-metrics { grid-template-columns: 1fr; } }

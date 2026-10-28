@@ -8,6 +8,8 @@ export async function connectDb(uri, dbName) {
     db.collection('users').createIndex({ email: 1 }, { unique: true }),
     db.collection('sessions').createIndex({ expiresAt: 1 }, { expireAfterSeconds: 0 }),
     db.collection('resetTokens').createIndex({ expiresAt: 1 }, { expireAfterSeconds: 0 }),
+    db.collection('verificationTokens').createIndex({ expiresAt: 1 }, { expireAfterSeconds: 0 }),
+    db.collection('emailEvents').createIndex({ createdAt: 1 }, { expireAfterSeconds: 90 * 24 * 3600 }),
     db.collection('sessions').createIndex({ userId: 1 }),
     db.collection('transactions').createIndex({ businessId: 1, date: -1 }),
     db.collection('transactions').createIndex({ businessId: 1, invoiceId: 1 }),

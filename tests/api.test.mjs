@@ -4,15 +4,32 @@ import { MongoMemoryServer } from 'mongodb-memory-server';
 import { connectDb } from '../server/db.mjs';
 import { createApp } from '../server/app.mjs';
 
-let mongod, client, server, base, db;
+let mongod, client, server, base, db, realFetch, originalEnv;
+const resendRequests = [];
+let resendFailure = null;
 
 before(async () => {
+  originalEnv = Object.fromEntries(['RESEND_API_KEY', 'MAIL_FROM', 'APP_URL', 'MORGAN_ADMIN_EMAIL'].map((k) => [k, process.env[k]]));
+  Object.assign(process.env, { RESEND_API_KEY: 're_test_suite_only', MAIL_FROM: 'Morgan <no-reply@example.test>', APP_URL: 'https://app.example.test', MORGAN_ADMIN_EMAIL: 'seifeldinashrafa@gmail.com' });
+  realFetch = globalThis.fetch;
+  globalThis.fetch = async (input, init) => {
+    if (String(input).startsWith('https://api.resend.com/emails')) {
+      const request = JSON.parse(init.body); resendRequests.push(request);
+      if (resendFailure) return new Response(JSON.stringify(resendFailure.body), { status: resendFailure.status, headers: { 'content-type': 'application/json' } });
+      return new Response(JSON.stringify({ id: `resend_test_${resendRequests.length}` }), { status: 200, headers: { 'content-type': 'application/json' } });
+    }
+    return realFetch(input, init);
+  };
   mongod = await MongoMemoryServer.create();
   ({ client, db } = await connectDb(mongod.getUri(), 'morgan_test'));
   server = createApp(db, { trustProxy: true }).listen(0);
   base = `http://127.0.0.1:${server.address().port}/api`;
 });
-after(async () => { server?.close(); await client?.close(); await mongod?.stop(); });
+after(async () => {
+  server?.close(); await client?.close(); await mongod?.stop();
+  globalThis.fetch = realFetch;
+  for (const [key, value] of Object.entries(originalEnv || {})) value === undefined ? delete process.env[key] : process.env[key] = value;
+});
 
 /** Tiny cookie-jar client. */
 function agent() {
@@ -32,31 +49,102 @@ function agent() {
   return { call, get cookie() { return cookie; }, set cookie(v) { cookie = v; } };
 }
 
-const reg = (a, email, extra = {}) => a.call('POST', '/auth/register', { name: 'Owner', email, password: 'correct horse 42', businessName: 'Biz ' + email, ...extra });
+const rawReg = (a, email, extra = {}) => a.call('POST', '/auth/register', { name: 'Owner', email, password: 'correct horse 42', businessName: 'Biz ' + email, ...extra });
+async function tokenFromLatest(email, subject = 'Verify your Morgan email') {
+  const msg = [...resendRequests].reverse().find((m) => m.to?.includes(email.toLowerCase()) && m.subject === subject);
+  assert.ok(msg, `expected a Resend request for ${subject}`);
+  const match = new RegExp(`${subject.startsWith('Reset') ? 'reset-password' : 'verify-email'}\\?token=([\\w-]+)`).exec(msg.text);
+  assert.ok(match, 'email includes a one-time link');
+  return match[1];
+}
+async function reg(a, email, extra = {}) {
+  const created = await rawReg(a, email, extra);
+  if (created.status !== 201) return created;
+  const token = await tokenFromLatest(email);
+  assert.equal((await a.call('POST', '/auth/verify-email', { token })).status, 200);
+  const login = await a.call('POST', '/auth/login', { email, password: 'correct horse 42' });
+  assert.equal(login.status, 200);
+  const stored = await db.collection('users').findOne({ email: email.toLowerCase() });
+  const business = await db.collection('businesses').findOne({ _id: stored.businessId });
+  return { ...created, body: { ...created.body, user: login.body.user, business: { ...business, id: String(business._id) } } };
+}
 const statementFile = Buffer.from('Date,Description,Amount\n2026-10-01,Sample row,1.00').toString('base64');
 
 test('registration validates input and rejects duplicates', async () => {
   const a = agent();
   assert.equal((await reg(a, 'bad-email')).status, 400);
   assert.equal((await a.call('POST', '/auth/register', { name: 'x', email: 'w@x.io', password: 'short', businessName: 'B' })).status, 400);
-  const ok = await reg(a, 'Alice@Example.com');
+  const ok = await rawReg(a, 'Alice@Example.com');
   assert.equal(ok.status, 201);
-  assert.equal(ok.body.user.email, 'alice@example.com');
-  assert.ok(!('passwordHash' in ok.body.user));
-  const set = ok.headers.get('set-cookie');
-  assert.match(set, /HttpOnly/); assert.match(set, /SameSite=Lax/);
-  assert.equal((await reg(agent(), 'alice@example.com')).status, 409);
+  assert.deepEqual(ok.body, { verificationRequired: true, email: 'alice@example.com', emailStatus: 'accepted', emailRetryable: true, emailMessage: 'Resend accepted the verification request. Inbox delivery is not confirmed.' });
+  assert.equal(a.cookie, '', 'signup does not create a financial workspace session');
+  const stored = await db.collection('users').findOne({ email: 'alice@example.com' });
+  assert.equal(stored.emailVerified, false);
+  assert.ok(await db.collection('verificationTokens').findOne({ userId: stored._id }));
+  assert.ok(resendRequests.some((m) => m.subject === 'Verify your Morgan email' && m.to.includes('alice@example.com')));
+  assert.equal((await a.call('GET', '/transactions')).status, 401, 'unverified account cannot access the ledger');
+  assert.equal((await rawReg(agent(), 'alice@example.com')).status, 409);
   const tz = await reg(agent(), 'tz@example.com', { timezone: 'Pacific/Kiritimati' });
   assert.equal(tz.body.business.timezone, 'Pacific/Kiritimati');
   assert.equal((await reg(agent(), 'tz2@example.com', { timezone: 'Not/AZone' })).body.business.timezone, 'UTC');
-  const stored = await db.collection('users').findOne({ email: 'alice@example.com' });
   assert.match(stored.passwordHash, /^scrypt\$/);
+});
+
+test('rejected verification delivery preserves the account and one retryable token with a sanitized audit outcome', async () => {
+  const a = agent();
+  resendFailure = { status: 403, body: { statusCode: 403, name: 'validation_error', message: 'You can only send testing emails to your own email address (owner@example.com). Verify a domain at resend.com/domains.' } };
+  const result = await rawReg(a, 'kept@example.com');
+  resendFailure = null;
+  assert.equal(result.status, 201);
+  assert.equal(result.body.emailStatus, 'rejected');
+  assert.match(result.body.emailMessage, /testing sender/);
+  const user = await db.collection('users').findOne({ email: 'kept@example.com' });
+  assert.ok(user, 'account remains available for safe retry');
+  assert.equal(user.emailVerified, false);
+  assert.equal(await db.collection('verificationTokens').countDocuments({ userId: user._id }), 1);
+  const event = await db.collection('emailEvents').findOne({ kind: 'verification', recipientHash: { $exists: true }, status: 'rejected' });
+  assert.equal(event.providerStatus, 403);
+  assert.equal(event.category, 'TEST_RECIPIENT_RESTRICTED');
+  assert.match(event.providerMessage, /\[address redacted\]/);
+  assert.ok(!JSON.stringify(event).includes('token='));
+  assert.equal((await a.call('POST', '/auth/login', { email: 'kept@example.com', password: 'correct horse 42' })).status, 403);
+  const count = await db.collection('verificationTokens').countDocuments({ userId: user._id });
+  resendFailure = { status: 403, body: { statusCode: 403, name: 'validation_error', message: 'testing emails only' } };
+  const retried = await a.call('POST', '/auth/resend-verification', { email: 'kept@example.com' });
+  resendFailure = null;
+  assert.equal(retried.body.emailStatus, 'rejected');
+  assert.equal(await db.collection('verificationTokens').countDocuments({ userId: user._id }), count, 'resend rotates the token without leaving duplicates');
+});
+
+test('verification handles invalid, expired, used links and resend requests', async () => {
+  const a = agent();
+  const created = await rawReg(a, 'verify-lifecycle@example.com');
+  assert.equal(created.status, 201);
+  assert.equal((await a.call('POST', '/auth/verify-email', { token: 'invalid-token' })).status, 400);
+  const expired = await tokenFromLatest('verify-lifecycle@example.com');
+  const user = await db.collection('users').findOne({ email: 'verify-lifecycle@example.com' });
+  await db.collection('verificationTokens').updateOne({ userId: user._id }, { $set: { expiresAt: new Date(Date.now() - 1000) } });
+  assert.equal((await a.call('POST', '/auth/verify-email', { token: expired })).status, 400);
+  const beforeResend = resendRequests.length;
+  const resend = await a.call('POST', '/auth/resend-verification', { email: 'verify-lifecycle@example.com' });
+  assert.equal(resend.body.emailStatus, 'accepted');
+  assert.equal(resendRequests.length, beforeResend + 1);
+  const fresh = await tokenFromLatest('verify-lifecycle@example.com');
+  const verified = await a.call('POST', '/auth/verify-email', { token: fresh });
+  assert.equal(verified.status, 200);
+  assert.equal(verified.body.welcomeEmail.status, 'accepted');
+  assert.ok(resendRequests.some((m) => m.subject === 'Welcome to Morgan' && m.to.includes('verify-lifecycle@example.com')));
+  assert.equal((await a.call('POST', '/auth/verify-email', { token: fresh })).status, 400, 'used verification token cannot be replayed');
+  assert.equal((await a.call('POST', '/auth/resend-verification', { email: 'verify-lifecycle@example.com' })).body.emailStatus, 'unknown', 'verified addresses do not receive another verification link');
 });
 
 test('login, session persistence, logout invalidates the session server-side', async () => {
   const a = agent();
   assert.equal((await a.call('POST', '/auth/login', { email: 'alice@example.com', password: 'wrong password 1' })).status, 401);
   assert.equal((await a.call('POST', '/auth/login', { email: 'nobody@example.com', password: 'whatever 123' })).status, 401);
+  assert.equal((await a.call('POST', '/auth/login', { email: 'ALICE@example.com', password: 'correct horse 42' })).status, 403, 'valid credentials cannot enter before email verification');
+  const verifyToken = await tokenFromLatest('alice@example.com');
+  assert.equal((await a.call('POST', '/auth/verify-email', { token: verifyToken })).status, 200);
   const ok = await a.call('POST', '/auth/login', { email: 'ALICE@example.com', password: 'correct horse 42' });
   assert.equal(ok.status, 200);
   const stolen = a.cookie;
@@ -65,6 +153,23 @@ test('login, session persistence, logout invalidates the session server-side', a
   const replay = agent(); replay.cookie = stolen;
   assert.equal((await replay.call('GET', '/auth/me')).body.user, null);
   assert.equal((await replay.call('GET', '/transactions')).status, 401);
+  const disabled = await reg(agent(), 'disabled@example.com');
+  assert.equal(disabled.status, 201);
+  await db.collection('users').updateOne({ email: 'disabled@example.com' }, { $set: { status: 'disabled' } });
+  assert.equal((await agent().call('POST', '/auth/login', { email: 'disabled@example.com', password: 'wrong password 1' })).status, 401);
+  assert.equal((await agent().call('POST', '/auth/login', { email: 'disabled@example.com', password: 'correct horse 42' })).status, 403);
+});
+
+test('administrator role is database-backed and protected on the API', async () => {
+  const admin = agent(), regular = agent();
+  const createdAdmin = await reg(admin, 'seifeldinashrafa@gmail.com');
+  assert.equal(createdAdmin.body.user.role, 'admin');
+  assert.equal((await db.collection('users').findOne({ email: 'seifeldinashrafa@gmail.com' })).role, 'admin');
+  assert.equal((await admin.call('GET', '/admin/overview')).status, 200);
+  assert.ok(Number.isInteger((await admin.call('GET', '/admin/overview')).body.users));
+  await reg(regular, 'normal-user@example.com');
+  assert.equal((await regular.call('GET', '/admin/overview')).status, 403, 'server denies ordinary authenticated users');
+  assert.equal((await agent().call('GET', '/admin/overview')).status, 401, 'server denies unauthenticated requests');
 });
 
 test('state-changing requests require the CSRF header', async () => {
@@ -139,7 +244,13 @@ test('production headers: CSP, HSTS, secure cookie, health check', async () => {
     assert.match(h.headers.get('content-security-policy'), /default-src 'self'.*frame-ancestors 'none'/);
     assert.match(h.headers.get('strict-transport-security'), /max-age/);
     const r = await fetch(url + '/auth/register', { method: 'POST', headers: { 'content-type': 'application/json', 'x-morgan-csrf': '1' }, body: JSON.stringify({ name: 'S', email: 'secure@example.com', password: 'correct horse 42', businessName: 'S' }) });
-    assert.match(r.headers.get('set-cookie'), /; Secure/);
+    assert.equal(r.status, 201);
+    assert.equal(r.headers.get('set-cookie'), null, 'registration does not issue an authenticated session');
+    const token = await tokenFromLatest('secure@example.com');
+    const verify = await fetch(url + '/auth/verify-email', { method: 'POST', headers: { 'content-type': 'application/json', 'x-morgan-csrf': '1' }, body: JSON.stringify({ token }) });
+    assert.equal(verify.status, 200);
+    const login = await fetch(url + '/auth/login', { method: 'POST', headers: { 'content-type': 'application/json', 'x-morgan-csrf': '1' }, body: JSON.stringify({ email: 'secure@example.com', password: 'correct horse 42' }) });
+    assert.match(login.headers.get('set-cookie'), /; Secure/);
   } finally { prodServer.close(); }
 });
 
@@ -160,11 +271,12 @@ test('full invoice workflow with exact money math, PDF and payments', async () =
 
   assert.equal((await a.call('POST', `/invoices/${id}/payments`, { amountCents: 100 })).status, 400, 'no payment on draft');
   const send = await a.call('POST', `/invoices/${id}/send`, {});
-  assert.equal(send.status, 503, 'email not configured is reported, not faked');
-  assert.equal((await a.call('GET', `/invoices/${id}`)).body.status, 'draft');
+  assert.equal(send.status, 200, 'provider acceptance is returned by the mail integration');
+  assert.ok(send.body.emailId);
+  assert.equal((await a.call('GET', `/invoices/${id}`)).body.status, 'sent');
 
-  const sent = await a.call('POST', `/invoices/${id}/mark-sent`);
-  assert.equal(sent.body.displayStatus, 'overdue'); // due 2026-10-15 is in the past relative to test clock? only if today > due
+  const sent = await a.call('GET', `/invoices/${id}`);
+  assert.equal(sent.body.displayStatus, 'overdue');
   assert.equal((await a.call('GET', '/overview')).body.cash, null, 'without a dated balance point, an invoice cannot establish available cash');
   const pdf = await a.call('GET', `/invoices/${id}/pdf`);
   assert.equal(pdf.headers.get('content-type'), 'application/pdf');
@@ -234,6 +346,7 @@ test('bank accounts isolate data and statement imports are reviewed, persistent 
   assert.equal(await db.collection('statementImports').countDocuments({ filename: 'statement.pdf' }), 0);
   const imported = await a.call('POST', '/bank-statements/import', { accountId: created.body.id, filename: 'october.csv', sourceFileBase64: statementFile, statementPeriodStart: '2026-09-01', statementPeriodEnd: '2026-09-30', openingBalanceCents: 100000, closingBalanceCents: 75000, rows });
   assert.equal(imported.status, 201); assert.equal(imported.body.imported, 1);
+  assert.equal(imported.body.emailNotification.status, 'accepted', 'statement import confirmation was accepted by the provider');
   const repeat = await a.call('POST', '/bank-statements/import', { accountId: created.body.id, filename: 'different-name.csv', sourceFileBase64: statementFile, statementPeriodStart: '2026-09-01', statementPeriodEnd: '2026-09-30', openingBalanceCents: 100000, closingBalanceCents: 75000, rows });
   assert.equal(repeat.status, 201); assert.equal(repeat.body.imported, 0); assert.equal(repeat.body.duplicates, 1);
   const txns = await a.call('GET', '/transactions'); assert.equal(txns.body.total, 1); assert.equal(txns.body.items[0].source, 'bank-statement');
@@ -371,6 +484,7 @@ test('password change signs out other sessions; account deletion removes data', 
   assert.equal((await a.call('POST', '/account/password', { currentPassword: 'bad', newPassword: 'new password 99' })).status, 401);
   const ch = await a.call('POST', '/account/password', { currentPassword: 'correct horse 42', newPassword: 'new password 99' });
   assert.equal(ch.body.signedOut, 1);
+  assert.equal(ch.body.emailNotification.status, 'accepted', 'password change security email was accepted by the provider');
   assert.equal((await other.call('GET', '/auth/me')).body.user, null);
   assert.equal((await a.call('GET', '/auth/me')).body.user.email, 'frank@example.com');
   await a.call('POST', '/transactions', { date: '2026-10-01', description: 'x', amount: '5', type: 'income' });
@@ -382,23 +496,32 @@ test('password change signs out other sessions; account deletion removes data', 
 test('password reset: generic response, single-use expiring token, all sessions revoked', async () => {
   const sent = [];
   const realFetch = globalThis.fetch;
+  const envBefore = Object.fromEntries(['RESEND_API_KEY', 'MAIL_FROM', 'APP_URL'].map((k) => [k, process.env[k]]));
   Object.assign(process.env, { RESEND_API_KEY: 're_test', MAIL_FROM: 'Morgan <no-reply@example.com>', APP_URL: 'https://app.example.com' });
-  globalThis.fetch = (u, o) => (String(u).startsWith('https://api.resend.com') ? (sent.push(JSON.parse(o.body)), Promise.resolve(new Response('{"id":"x"}', { status: 200 }))) : realFetch(u, o));
+  globalThis.fetch = (u, o) => {
+    if (!String(u).startsWith('https://api.resend.com')) return realFetch(u, o);
+    const request = JSON.parse(o.body); sent.push(request); resendRequests.push(request);
+    return Promise.resolve(new Response(JSON.stringify({ id: `resend_reset_${sent.length}` }), { status: 200 }));
+  };
   try {
     const owner = agent(), other = agent();
     await reg(owner, 'reset@example.com');
     await other.call('POST', '/auth/login', { email: 'reset@example.com', password: 'correct horse 42' });
     // Unknown email: same response, no mail.
     assert.deepEqual((await agent().call('POST', '/auth/forgot', { email: 'ghost@example.com' })).body, { ok: true });
-    assert.equal(sent.length, 0);
+    const resetMessages = () => sent.filter((message) => message.subject === 'Reset your Morgan password');
+    assert.equal(resetMessages().length, 0);
     // Host header must not influence the link.
     await agent().call('POST', '/auth/forgot', { email: 'reset@example.com' }, { 'x-forwarded-host': 'evil.example' });
-    assert.equal(sent.length, 1);
-    const token = /reset-password\?token=([\w-]+)/.exec(sent[0].text)[1];
-    assert.match(sent[0].text, /^[\s\S]*https:\/\/app\.example\.com\/reset-password/);
+    assert.equal(resetMessages().length, 1);
+    const resetMessage = resetMessages()[0];
+    const token = /reset-password\?token=([\w-]+)/.exec(resetMessage.text)[1];
+    assert.match(resetMessage.text, /^[\s\S]*https:\/\/app\.example\.com\/reset-password/);
     assert.equal((await agent().call('POST', '/auth/reset', { token, password: 'short' })).status, 400);
     assert.equal((await agent().call('POST', '/auth/reset', { token: 'forged', password: 'brand new pass 7' })).status, 400);
-    assert.equal((await agent().call('POST', '/auth/reset', { token, password: 'brand new pass 7' })).status, 200);
+    const resetResult = await agent().call('POST', '/auth/reset', { token, password: 'brand new pass 7' });
+    assert.equal(resetResult.status, 200);
+    assert.equal(resetResult.body.emailNotification.status, 'accepted', 'password reset security email was accepted by the provider');
     assert.equal((await agent().call('POST', '/auth/reset', { token, password: 'another pass 8' })).status, 400, 'token is single-use');
     assert.equal((await owner.call('GET', '/auth/me')).body.user, null, 'existing sessions revoked');
     assert.equal((await other.call('GET', '/auth/me')).body.user, null);
@@ -406,14 +529,14 @@ test('password reset: generic response, single-use expiring token, all sessions 
     assert.equal((await agent().call('POST', '/auth/login', { email: 'reset@example.com', password: 'brand new pass 7' })).status, 200);
     // Expired tokens are rejected.
     await agent().call('POST', '/auth/forgot', { email: 'reset@example.com' });
-    const t2 = /token=([\w-]+)/.exec(sent.at(-1).text)[1];
+    const t2 = /token=([\w-]+)/.exec(resetMessages().at(-1).text)[1];
     await db.collection('resetTokens').updateMany({}, { $set: { expiresAt: new Date(Date.now() - 1000) } });
     assert.equal((await agent().call('POST', '/auth/reset', { token: t2, password: 'brand new pass 9' })).status, 400);
   } finally {
     globalThis.fetch = realFetch;
-    for (const k of ['RESEND_API_KEY', 'MAIL_FROM', 'APP_URL']) delete process.env[k];
+    for (const [key, value] of Object.entries(envBefore)) value === undefined ? delete process.env[key] : process.env[key] = value;
   }
-  assert.equal((await agent().call('POST', '/auth/forgot', { email: 'reset@example.com' })).status, 503, 'unavailable without email config');
+  assert.equal((await agent().call('POST', '/auth/forgot', { email: 'reset@example.com' })).status, 200, 'email configuration remains available to following tests');
 });
 
 test('expired sessions are rejected server-side', async () => {
@@ -474,6 +597,11 @@ test('financial setup, expected schedules, forecast edits and business isolation
   assert.equal(await db.collection('transactions').countDocuments({ businessId: new (await import('mongodb')).ObjectId(created.body.business.id) }), 0, 'removing a plan leaves actual transaction history untouched');
   const done = await a.call('PATCH', '/financial-setup', { complete: true });
   assert.equal(done.body.business.financialSetupComplete, true);
+  assert.equal(done.body.emailNotification.status, 'accepted');
+  assert.ok(resendRequests.some((message) => message.subject === 'Your Morgan workspace is ready' && message.to.includes('planner@example.com')));
+  const emailsBeforeRepeat = resendRequests.length;
+  await a.call('PATCH', '/financial-setup', { complete: true });
+  assert.equal(resendRequests.length, emailsBeforeRepeat, 'repeat setup saves do not send duplicate onboarding emails');
   assert.equal((await a.call('GET', '/auth/me')).body.business.financialSetupComplete, true);
   await a.call('POST', '/auth/logout');
   const fresh = agent();

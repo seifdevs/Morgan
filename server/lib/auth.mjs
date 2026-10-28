@@ -73,7 +73,7 @@ export function loadSession(db) {
         const s = await db.collection('sessions').findOne({ _id: hashToken(token), expiresAt: { $gt: new Date() } });
         if (s) {
           const user = await db.collection('users').findOne({ _id: s.userId });
-          if (user) { req.user = user; req.businessId = user.businessId; req.sessionId = s._id; }
+          if (user?.emailVerified === true) { req.user = user; req.businessId = user.businessId; req.sessionId = s._id; }
         }
       }
       next();
@@ -83,6 +83,11 @@ export function loadSession(db) {
 
 export function requireAuth(req, _res, next) {
   if (!req.user) return next(new HttpError(401, 'Please sign in'));
+  next();
+}
+
+export function requireAdmin(req, _res, next) {
+  if (req.user?.role !== 'admin') return next(new HttpError(req.user ? 403 : 401, req.user ? 'Administrator access required' : 'Please sign in'));
   next();
 }
 

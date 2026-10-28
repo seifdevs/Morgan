@@ -7,17 +7,17 @@ import {
 } from './lib/validate.mjs';
 import {
   hashPassword, verifyPassword, DUMMY_HASH, createSession, sessionCookie, validatePassword,
-  loadSession, requireAuth, rateLimit, hashToken,
+  loadSession, requireAuth, requireAdmin, rateLimit, hashToken,
 } from './lib/auth.mjs';
 import { invoicePdf } from './lib/pdf.mjs';
-import { mailConfigured, sendMail } from './lib/mail.mjs';
+import { mailConfigured, sendMail, notifyMail, localEmailPreviewEnabled, listLocalEmailPreviews } from './lib/mail.mjs';
 import * as A from './lib/analytics.mjs';
 
 const CURRENCIES = ['USD', 'EUR', 'GBP', 'CAD', 'AUD', 'EGP', 'AED', 'SAR', 'CHF', 'JPY'];
 const INVOICE_STATUSES = ['draft', 'sent', 'paid', 'void'];
 const wrap = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
 
-const publicUser = (u) => ({ id: String(u._id), name: u.name, email: u.email, createdAt: u.createdAt });
+const publicUser = (u) => ({ id: String(u._id), name: u.name, email: u.email, role: u.role === 'admin' ? 'admin' : 'user', createdAt: u.createdAt });
 const publicBusiness = (b) => ({
   id: String(b._id), name: b.name, currency: b.currency, address: b.address || '', email: b.email || '',
   invoicePrefix: b.invoicePrefix, defaultTaxRateBps: b.defaultTaxRateBps || 0, paymentTermsDays: b.paymentTermsDays ?? 14,
@@ -74,9 +74,23 @@ export function createApi(db, { secureCookies }) {
   const setCookie = (res, token, maxAgeMs) => res.setHeader('Set-Cookie', sessionCookie(token, { secure: secureCookies, maxAgeMs }));
   const scoped = (req, extra = {}) => ({ businessId: req.businessId, ...extra });
   const business = (req) => C('businesses').findOne({ _id: req.businessId });
+  const appOrigin = () => (process.env.APP_URL || '').replace(/\/$/, '');
+  const emailLink = (path, token) => `${appOrigin()}/${path}?token=${encodeURIComponent(token)}`;
+  const sendVerification = async (user) => {
+    const token = randomBytes(32).toString('base64url');
+    await C('verificationTokens').deleteMany({ userId: user._id });
+    await C('verificationTokens').insertOne({ _id: hashToken(token), userId: user._id, expiresAt: new Date(Date.now() + 24 * 3600e3) });
+    try {
+      return await sendMail({ db, kind: 'verification', to: user.email, subject: 'Verify your Morgan email', text: `Hi ${user.name},\n\nVerify your email address to finish creating your Morgan account. This link expires in 24 hours and can only be used once:\n${emailLink('verify-email', token)}\n\nIf you did not create this account, you can ignore this message.` });
+    } catch (error) {
+      return { status: error.deliveryStatus || 'unknown', code: error.code || 'DELIVERY_FAILED', providerStatus: error.providerStatus ?? null, message: error.message, retryable: Boolean(error.retryable) };
+    }
+  };
+  const notifyAccount = (user, subject, text, kind = 'account_notification') => notifyMail({ db, kind, to: user.email, subject, text });
 
   /* ---------------- Auth ---------------- */
   r.post('/auth/register', rateLimit({ key: 'register', limit: 5, windowMs: 3600e3 }), wrap(async (req, res) => {
+    if ((!mailConfigured() && !localEmailPreviewEnabled()) || !appOrigin()) throw new HttpError(503, 'Email verification is not configured on this server.');
     const b = req.body || {};
     const name = str(b.name, 'Name', { required: true, max: 100 });
     const mail = email(b.email);
@@ -86,7 +100,8 @@ export function createApi(db, { secureCookies }) {
     const timezone = validTz(b.timezone) ? b.timezone : 'UTC';
     if (await C('users').findOne({ email: mail })) throw new HttpError(409, 'An account with this email already exists');
     const businessId = new ObjectId();
-    const user = { _id: new ObjectId(), name, email: mail, passwordHash: await hashPassword(password), businessId, createdAt: new Date() };
+    const isConfiguredAdmin = mail === String(process.env.MORGAN_ADMIN_EMAIL || '').trim().toLowerCase();
+    const user = { _id: new ObjectId(), name, email: mail, role: isConfiguredAdmin ? 'admin' : 'user', passwordHash: await hashPassword(password), businessId, emailVerified: false, createdAt: new Date() };
     await C('businesses').insertOne({
       _id: businessId, name: businessName, currency, timezone, invoicePrefix: 'INV-', invoiceSeq: 0, defaultTaxRateBps: 0,
       paymentTermsDays: 14, openingBalanceCents: 0, openingBalanceDate: null, financialSetupComplete: false, monthlyBudgetCents: null, minimumCashCents: null, ownerId: user._id, createdAt: new Date(),
@@ -98,8 +113,27 @@ export function createApi(db, { secureCookies }) {
       if (e.code === 11000) throw new HttpError(409, 'An account with this email already exists');
       throw e;
     }
-    setCookie(res, await createSession(db, user, req));
-    res.status(201).json({ user: publicUser(user), business: publicBusiness(await business({ businessId })) });
+    const emailResult = await sendVerification(user);
+    res.status(201).json({ verificationRequired: true, email: user.email, emailStatus: emailResult.status, emailRetryable: emailResult.status === 'accepted' || Boolean(emailResult.retryable), ...(emailResult.testRecipient && { developmentCopy: true }), emailMessage: emailResult.status === 'accepted' ? emailResult.testRecipient ? 'Resend accepted a development test copy. Check the configured test inbox and the local admin email preview; inbox delivery is not confirmed.' : 'Resend accepted the verification request. Inbox delivery is not confirmed.' : emailResult.message || 'Verification email delivery is temporarily unavailable. Your account is saved; retry sending the link.' });
+  }));
+
+  r.post('/auth/verify-email', rateLimit({ key: 'verify-email', limit: 10, windowMs: 3600e3 }), wrap(async (req, res) => {
+    const token = typeof req.body?.token === 'string' ? req.body.token : '';
+    const entry = token && await C('verificationTokens').findOneAndDelete({ _id: hashToken(token), expiresAt: { $gt: new Date() } });
+    if (!entry) throw new HttpError(400, 'This verification link is invalid or has expired. Request a new one.');
+    const user = await C('users').findOne({ _id: entry.userId });
+    if (!user) throw new HttpError(400, 'This verification link is invalid or has expired. Request a new one.');
+    if (user.emailVerified) throw new HttpError(409, 'This email address is already verified.');
+    await C('users').updateOne({ _id: user._id, emailVerified: false }, { $set: { emailVerified: true, emailVerifiedAt: new Date() } });
+    const welcome = await notifyAccount(user, 'Welcome to Morgan', `Hi ${user.name},\n\nYour email is verified and your Morgan workspace is ready. Sign in to finish setting up your financial profile.\n\n${appOrigin()}/login`, 'welcome');
+    res.json({ ok: true, welcomeEmail: welcome });
+  }));
+
+  r.post('/auth/resend-verification', rateLimit({ key: 'resend-verification', limit: 3, windowMs: 3600e3, byEmail: true }), wrap(async (req, res) => {
+    const mail = email(req.body?.email);
+    const user = await C('users').findOne({ email: mail, emailVerified: { $ne: true } });
+    const result = user ? await sendVerification(user) : null;
+    res.json({ ok: true, emailStatus: result?.status || 'unknown', ...(result?.testRecipient && { developmentCopy: true, emailMessage: 'Resend accepted a development test copy. Check the configured test inbox and the local admin email preview; inbox delivery is not confirmed.' }), ...(result && result.status !== 'accepted' ? { emailMessage: result.message, category: result.code, providerStatus: result.providerStatus, retryable: result.retryable } : {}) });
   }));
 
   r.post('/auth/login', rateLimit({ key: 'login-ip', limit: 30, windowMs: 15 * 60e3, failuresOnly: true }), rateLimit({ key: 'login', limit: 8, windowMs: 15 * 60e3, byEmail: true, failuresOnly: true }), wrap(async (req, res) => {
@@ -108,6 +142,8 @@ export function createApi(db, { secureCookies }) {
     const user = mail ? await C('users').findOne({ email: mail }) : null;
     const ok = await verifyPassword(password, user?.passwordHash || DUMMY_HASH);
     if (!user || !ok) throw new HttpError(401, 'Email or password is incorrect');
+    if (user.disabledAt || user.status === 'disabled') throw new HttpError(403, 'This account is disabled. Contact the workspace administrator.');
+    if (user.emailVerified !== true) throw new HttpError(403, 'Verify your email before signing in. Use the resend verification link to get a fresh message.');
     setCookie(res, await createSession(db, user, req));
     res.json({ user: publicUser(user), business: publicBusiness(await business({ businessId: user.businessId })) });
   }));
@@ -124,7 +160,7 @@ export function createApi(db, { secureCookies }) {
   }));
 
   // Password reset: links are built only from the configured APP_URL (never the Host header) to prevent reset-link poisoning.
-  const resetAvailable = () => mailConfigured() && Boolean(process.env.APP_URL);
+  const resetAvailable = () => (mailConfigured() || localEmailPreviewEnabled()) && Boolean(process.env.APP_URL);
   r.post('/auth/forgot', rateLimit({ key: 'forgot', limit: 5, windowMs: 3600e3 }), wrap(async (req, res) => {
     if (!resetAvailable()) throw new HttpError(503, 'Password reset by email is not available on this server.');
     const mail = email(req.body?.email);
@@ -134,7 +170,11 @@ export function createApi(db, { secureCookies }) {
       await C('resetTokens').deleteMany({ userId: user._id });
       await C('resetTokens').insertOne({ _id: hashToken(token), userId: user._id, expiresAt: new Date(Date.now() + 30 * 60e3) });
       const link = `${process.env.APP_URL.replace(/\/$/, '')}/reset-password?token=${token}`;
-      await sendMail({ to: user.email, subject: 'Reset your Morgan password', text: `Someone asked to reset the password for this Morgan account.\n\nReset it here (valid for 30 minutes, single use):\n${link}\n\nIf this wasn't you, ignore this email — your password stays the same.` });
+      try {
+        await sendMail({ db, kind: 'password_reset', to: user.email, subject: 'Reset your Morgan password', text: `Someone asked to reset the password for this Morgan account.\n\nReset it here (valid for 30 minutes, single use):\n${link}\n\nIf this wasn't you, ignore this email — your password stays the same.` });
+      } catch {
+        // Preserve account enumeration protection; the outcome is kept in emailEvents.
+      }
     }
     // Same response whether or not the account exists.
     res.json({ ok: true });
@@ -146,7 +186,9 @@ export function createApi(db, { secureCookies }) {
     if (!t) throw new HttpError(400, 'This reset link is invalid or has expired. Request a new one.');
     await C('users').updateOne({ _id: t.userId }, { $set: { passwordHash: await hashPassword(pw) } });
     await C('sessions').deleteMany({ userId: t.userId });
-    res.json({ ok: true });
+    const user = await C('users').findOne({ _id: t.userId });
+    const emailNotification = user ? await notifyAccount(user, 'Your Morgan password was changed', `The password for your Morgan account was changed at ${new Date().toISOString()}. All active sessions were signed out. If you did not make this change, reset your password immediately: ${appOrigin()}/forgot-password`) : { status: 'unknown', code: 'ACCOUNT_NOT_FOUND' };
+    res.json({ ok: true, emailNotification });
   }));
 
   // Everything below requires a session. "Today" is the business's local date, not the server's.
@@ -155,6 +197,19 @@ export function createApi(db, { secureCookies }) {
     const b = await C('businesses').findOne({ _id: req.businessId }, { projection: { timezone: 1 } });
     req.today = todayIn(b?.timezone);
     next();
+  }));
+
+  r.get('/admin/email-previews', requireAdmin, wrap(async (_req, res) => {
+    if (!localEmailPreviewEnabled()) return res.json({ enabled: false, items: [] });
+    res.json({ enabled: true, items: listLocalEmailPreviews() });
+  }));
+
+  r.get('/admin/overview', requireAdmin, wrap(async (_req, res) => {
+    const [users, businesses, transactions, invoices, bills, statementImports] = await Promise.all([
+      C('users').countDocuments({}), C('businesses').countDocuments({}), C('transactions').countDocuments({}),
+      C('invoices').countDocuments({}), C('bills').countDocuments({}), C('statementImports').countDocuments({}),
+    ]);
+    res.json({ users, businesses, transactions, invoices, bills, statementImports });
   }));
 
   /* ---------------- Account & business ---------------- */
@@ -168,6 +223,7 @@ export function createApi(db, { secureCookies }) {
       set.email = newEmail;
     }
     await C('users').updateOne({ _id: req.user._id }, { $set: set });
+    if (set.email) await notifyAccount({ ...req.user, email: req.user.email }, 'Your Morgan account email was changed', `The sign-in email for your Morgan account was changed to ${set.email} at ${new Date().toISOString()}. If you did not make this change, contact Morgan support.`);
     res.json({ user: publicUser({ ...req.user, ...set }) });
   }));
 
@@ -177,7 +233,8 @@ export function createApi(db, { secureCookies }) {
     await C('users').updateOne({ _id: req.user._id }, { $set: { passwordHash: await hashPassword(pw) } });
     // Invalidate every other session after a password change.
     const { deletedCount } = await C('sessions').deleteMany({ userId: req.user._id, _id: { $ne: req.sessionId } });
-    res.json({ ok: true, signedOut: deletedCount });
+    const emailNotification = await notifyAccount(req.user, 'Morgan security update: password changed', `Your Morgan password was changed at ${new Date().toISOString()}. ${deletedCount} other session(s) were signed out. If you did not make this change, reset your password immediately: ${appOrigin()}/forgot-password`);
+    res.json({ ok: true, signedOut: deletedCount, emailNotification });
   }));
 
   r.get('/account/sessions', wrap(async (req, res) => {
@@ -187,7 +244,8 @@ export function createApi(db, { secureCookies }) {
 
   r.post('/account/sessions/revoke-others', wrap(async (req, res) => {
     const { deletedCount } = await C('sessions').deleteMany({ userId: req.user._id, _id: { $ne: req.sessionId } });
-    res.json({ ok: true, signedOut: deletedCount });
+    const emailNotification = await notifyAccount(req.user, 'Morgan security update: sessions signed out', `${deletedCount} other session(s) on your Morgan account were signed out at ${new Date().toISOString()}. If you did not request this, change your password: ${appOrigin()}/forgot-password`);
+    res.json({ ok: true, signedOut: deletedCount, emailNotification });
   }));
 
   r.delete('/account', rateLimit({ key: 'delete-account', limit: 5, windowMs: 3600e3, failuresOnly: true }), wrap(async (req, res) => {
@@ -246,6 +304,7 @@ export function createApi(db, { secureCookies }) {
   }));
   r.patch('/financial-setup', wrap(async (req, res) => {
     const b = req.body || {};
+    const before = await business(req);
     const set = {};
     if (b.industry !== undefined) set.industry = str(b.industry, 'Industry', { max: 80 });
     if (b.openingBalanceCents !== undefined) set.openingBalanceCents = cents(b.openingBalanceCents, 'Available cash');
@@ -274,7 +333,11 @@ export function createApi(db, { secureCookies }) {
     }
     if (b.complete === true) set.financialSetupComplete = true;
     await C('businesses').updateOne({ _id: req.businessId }, { $set: set });
-    res.json({ business: publicBusiness(await business(req)) });
+    const updated = await business(req);
+    const emailNotification = b.complete === true && before?.financialSetupComplete !== true
+      ? await notifyAccount(req.user, 'Your Morgan workspace is ready', `Hi ${req.user.name},\n\nYour initial Morgan financial setup is complete for ${updated.name}. You can return to review cash, invoices, bills, and your saved planning assumptions at any time.\n\n${appOrigin()}/app` , 'onboarding_complete')
+      : undefined;
+    res.json({ business: publicBusiness(updated), ...(emailNotification && { emailNotification }) });
   }));
   r.get('/planning-items', wrap(async (req, res) => {
     const items = await C('planningItems').find(scoped(req)).sort({ nextDate: 1, createdAt: -1 }).toArray();
@@ -650,7 +713,8 @@ export function createApi(db, { secureCookies }) {
       if (e.code === 11000) throw new HttpError(409, 'These transactions were imported in another session. Refresh the preview before retrying.');
       throw e;
     } finally { await session?.endSession(); }
-    res.status(201).json({ importId: String(importId), imported: docs.length, duplicates: review.summary.duplicates, matchedSuggestions: review.rows.filter((r) => r.suggestedMatch).length, summary: review.summary });
+    const emailNotification = await notifyAccount(req.user, 'Bank statement import complete', `A bank statement was imported into Morgan.\n\nAccount: ${account.name}\nFile: ${filename}\nPeriod: ${review.summary.periodStart} to ${review.summary.periodEnd}\nImported transactions: ${docs.length}\nDuplicates skipped: ${review.summary.duplicates}\nImported at: ${importedAt.toISOString()}\n\nIf you did not perform this action, review your account sessions in Morgan Settings.`);
+    res.status(201).json({ importId: String(importId), imported: docs.length, duplicates: review.summary.duplicates, matchedSuggestions: review.rows.filter((r) => r.suggestedMatch).length, summary: review.summary, emailNotification });
   }));
 
   r.patch('/transactions/:id', wrap(async (req, res) => {
@@ -819,15 +883,15 @@ export function createApi(db, { secureCookies }) {
     const biz = await business(req);
     const d = dec(req, inv);
     const message = str(req.body?.message, 'Message', { max: 2000 });
-    await sendMail({
-      to, replyTo: biz.email || undefined,
+    const emailResult = await sendMail({
+      db, kind: 'invoice', to, replyTo: biz.email || undefined,
       subject: `Invoice ${inv.number} from ${biz.name}`,
       text: `${message ? message + '\n\n' : ''}Invoice ${inv.number}\nAmount due: ${formatMoney(d.balanceDue, biz.currency)}\nDue date: ${inv.dueDate}\n\nThe invoice is attached as a PDF.\n\n${biz.name}`,
       attachments: [{ filename: `${inv.number}.pdf`, content: invoicePdf(d, biz) }],
     });
     const set = { sentAt: new Date(), sentVia: 'email', sentTo: to, ...(inv.status === 'draft' && { status: 'sent' }) };
     await C('invoices').updateOne({ _id: inv._id, businessId: req.businessId }, { $set: set });
-    res.json(dec(req, { ...inv, ...set }));
+    res.json({ ...dec(req, { ...inv, ...set }), emailStatus: emailResult.status, emailId: emailResult.id });
   }));
 
   r.post('/invoices/:id/void', wrap(async (req, res) => {

@@ -30,15 +30,15 @@ Checks: `npm run typecheck`, `npm test` (API + money tests against a throwaway i
 | `MONGODB_URI`, `MONGODB_DB` | MongoDB connection (required for `dev`/`start`). |
 | `PORT` | Default 4173. |
 | `TRUST_PROXY=1` | Set behind a reverse proxy so rate limits see real client IPs. |
-| `RESEND_API_KEY`, `MAIL_FROM` | Optional email via Resend: invoice delivery and password reset. Without them, the app says email is not configured and offers PDF download + "mark as sent". |
+| `RESEND_API_KEY`, `MAIL_FROM` | Server-only Resend credentials and sender address for verification, onboarding, password reset, security, statement, and invoice emails. |
 | `APP_URL` | Public origin used to build password-reset links (never taken from the request Host header). Reset is offered only when this and email are configured. |
 
 Production serves the session cookie with `Secure`, so run it behind HTTPS.
 
 ## Deploying
 
-- Needs a long-running Node 20+ process (Render, Railway, Fly.io, a VM…). It is **not** a Vercel serverless app: it calls `app.listen`, keeps a Mongo connection pool, and rate-limits in memory (run one instance, or move limits to a shared store).
-- Build with `npm ci && npm run build`, run `npm start`. Health check: `GET /api/health` (pings MongoDB).
+- **Vercel:** Vite serves the static app from `dist/`; `api/[...path].mjs` adapts Morgan's Express API to a Node.js Function, and `vercel.json` sends client-side routes back to `index.html`. Set `MONGODB_URI`, `MONGODB_DB`, `RESEND_API_KEY`, `MAIL_FROM`, and `APP_URL` in the Production environment. `MORGAN_ADMIN_EMAIL` is optional. Redeploy after changing environment variables. Health check: `GET /api/health` (pings MongoDB).
+- **Long-running Node host (Render, Railway, Fly.io, VM):** Build with `npm ci && npm run build`, then run `npm start`. Keep the process behind HTTPS. The in-memory rate limiter is intended for one instance; use a shared store before scaling horizontally.
 - On first start it creates its indexes (unique `users.email`, unique `invoices.businessId+number`, TTL on `sessions.expiresAt`, and lookups by `businessId`). Use a database dedicated to Morgan (`MONGODB_DB`, default `morgan`).
 - Atlas: create a database user with `readWrite` on the Morgan database only, and allow the host's outbound IPs in the access list.
 - Production sends a Content-Security-Policy that allows the Helix widget from `helixbots.io`; adjust `server/app.mjs` if you add third-party scripts.

@@ -52,7 +52,7 @@ export default function FinancialOnboarding() {
     setBusy(true); setFormError('');
     try {
       await savePosition();
-      const result = await api<{ business: Business }>('/financial-setup', { method: 'PATCH', body: { complete: true } });
+      const result = await api<{ business: Business; emailNotification?: { status: string } }>('/financial-setup', { method: 'PATCH', body: { complete: true } });
       setSession({ business: result.business }); nav('/app', { replace: true });
     } catch (e) { setFormError((e as Error).message); } finally { setBusy(false); }
   }

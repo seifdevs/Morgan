@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "node --env-file-if-exists=.env server/index.mjs",
     "dev:local": "node --env-file-if-exists=.env server/local.mjs",
+    "test:resend": "node --env-file-if-exists=.env scripts/test-resend.mjs",
     "build": "tsc --noEmit && vite build",
     "start": "node --env-file-if-exists=.env server/index.mjs --prod",
     "typecheck": "tsc --noEmit",
@@ -22,7 +23,8 @@
     "pdfjs-dist": "6.4.299",
     "react": "^19.3.1",
     "react-dom": "^19.3.1",
-    "react-router-dom": "^7.18.4"
+    "react-router-dom": "^7.18.4",
+    "resend": "^6.34.1"
   },
   "devDependencies": {
     "@types/node": "^26.6.5",

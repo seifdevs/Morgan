@@ -64,10 +64,6 @@ export function Auth({ mode }: { mode: 'login' | 'signup' }) {
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
   const [dest, setDest] = useState<string | null>(null);
-  const [verificationEmail, setVerificationEmail] = useState('');
-  const [verificationEmailStatus, setVerificationEmailStatus] = useState<'accepted' | 'rejected' | 'failed' | 'unknown'>('unknown');
-  const [verificationEmailMessage, setVerificationEmailMessage] = useState('');
-  const [verificationEmailRetryable, setVerificationEmailRetryable] = useState(true);
   const [form, setForm] = useState({ name: '', businessName: '', currency: 'USD', password: '' });
   const set = (k: keyof typeof form) => (v: string) => setForm((f) => ({ ...f, [k]: v }));
 
@@ -81,8 +77,7 @@ export function Auth({ mode }: { mode: 'login' | 'signup' }) {
     if (signup && !rules(f.password).slice(0, 3).every((r) => r.ok)) { setError('Password needs 10+ characters, a letter and a number'); return; }
     setBusy(true);
     try {
-      const res = await api<{ user?: User; business?: Business; verificationRequired?: boolean; email?: string; emailStatus?: 'accepted' | 'rejected' | 'failed' | 'unknown'; emailMessage?: string; emailRetryable?: boolean }>(signup ? '/auth/register' : '/auth/login', { method: 'POST', body: { ...f, timezone: Intl.DateTimeFormat().resolvedOptions().timeZone } });
-      if (res.verificationRequired) { setVerificationEmail(res.email || f.email); setVerificationEmailStatus(res.emailStatus || 'unknown'); setVerificationEmailMessage(res.emailMessage || ''); setVerificationEmailRetryable(res.emailRetryable !== false); setBusy(false); return; }
+      const res = await api<{ user?: User; business?: Business }>(signup ? '/auth/register' : '/auth/login', { method: 'POST', body: { ...f, timezone: Intl.DateTimeFormat().resolvedOptions().timeZone } });
       if (!res.user || !res.business) throw new Error('The server returned an incomplete sign-in response.');
       setDest(signup ? '/app/onboarding' : next);
       setSession({ user: res.user, business: res.business });
@@ -95,14 +90,12 @@ export function Auth({ mode }: { mode: 'login' | 'signup' }) {
   const strength = rules(form.password).filter((r) => r.ok).length;
   const step = !form.name || !form.businessName ? 0 : strength < 3 ? 1 : 2;
 
-  if (signup && verificationEmail) return <AuthShell kind="signup" stage={<LoginStage headline={<>One last<br /><span>step.</span></>} sub="Verify your email to secure your Morgan workspace." />}><div className="auth-form"><h1>{verificationEmailStatus === 'accepted' ? 'Check your inbox' : 'Your account is saved'}</h1><p className={verificationEmailStatus === 'accepted' ? 'muted' : 'form-error'} role="status">{verificationEmailMessage || 'Verification email delivery is temporarily unavailable. Your account is saved; retry sending the link.'} <b>{verificationEmail}</b> {verificationEmailStatus === 'accepted' && 'The link expires in 24 hours.'}</p><p className="auth-switch"><Link className="link" to={`/verify-email`}>Already have a link? Verify email</Link></p>{verificationEmailRetryable ? <p className="auth-switch">{verificationEmailStatus === 'accepted' ? 'Need a fresh message?' : 'Retry verification email delivery:'} <ResendVerification initialEmail={verificationEmail} /></p> : <p className="muted">An administrator must restore email sending before another request can be made.</p>}</div></AuthShell>;
-
   if (!signup) {
     return (
       <AuthShell kind="login" stage={<LoginStage headline={<>Welcome<br /><span>back.</span></>} sub="Your ledger is exactly where you left it — every figure tied to the record behind it." />}>
         <form className="auth-form" onSubmit={submit}>
           <h1>Open your ledger</h1>
-          {error && <div className="form-error" role="alert">{error}{error.includes('Verify your email') && <> <Link className="link" to="/verify-email">Resend verification</Link></>}</div>}
+          {error && <div className="form-error" role="alert">{error}</div>}
           <div className="field"><label htmlFor="email">Email</label><input className="input" id="email" name="email" type="email" autoComplete="email" required autoFocus /></div>
           <PasswordField id="password" name="password" label="Password" autoComplete="current-password" />
           {passwordResetAvailable && <Link className="link" style={{ justifySelf: 'start', fontSize: 13 }} to="/forgot-password">Forgot password?</Link>}

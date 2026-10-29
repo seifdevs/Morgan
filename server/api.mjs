@@ -90,7 +90,6 @@ export function createApi(db, { secureCookies }) {
 
   /* ---------------- Auth ---------------- */
   r.post('/auth/register', rateLimit({ key: 'register', limit: 5, windowMs: 3600e3 }), wrap(async (req, res) => {
-    if ((!mailConfigured() && !localEmailPreviewEnabled()) || !appOrigin()) throw new HttpError(503, 'Email verification is not configured on this server.');
     const b = req.body || {};
     const name = str(b.name, 'Name', { required: true, max: 100 });
     const mail = email(b.email);
@@ -101,7 +100,9 @@ export function createApi(db, { secureCookies }) {
     if (await C('users').findOne({ email: mail })) throw new HttpError(409, 'An account with this email already exists');
     const businessId = new ObjectId();
     const isConfiguredAdmin = mail === String(process.env.MORGAN_ADMIN_EMAIL || '').trim().toLowerCase();
-    const user = { _id: new ObjectId(), name, email: mail, role: isConfiguredAdmin ? 'admin' : 'user', passwordHash: await hashPassword(password), businessId, emailVerified: false, createdAt: new Date() };
+    // Email confirmation is temporarily disabled. Password validation and the normal
+    // server-side session remain required for access.
+    const user = { _id: new ObjectId(), name, email: mail, role: isConfiguredAdmin ? 'admin' : 'user', passwordHash: await hashPassword(password), businessId, emailVerified: true, emailVerificationDisabled: true, createdAt: new Date() };
     await C('businesses').insertOne({
       _id: businessId, name: businessName, currency, timezone, invoicePrefix: 'INV-', invoiceSeq: 0, defaultTaxRateBps: 0,
       paymentTermsDays: 14, openingBalanceCents: 0, openingBalanceDate: null, financialSetupComplete: false, monthlyBudgetCents: null, minimumCashCents: null, ownerId: user._id, createdAt: new Date(),
@@ -113,8 +114,8 @@ export function createApi(db, { secureCookies }) {
       if (e.code === 11000) throw new HttpError(409, 'An account with this email already exists');
       throw e;
     }
-    const emailResult = await sendVerification(user);
-    res.status(201).json({ verificationRequired: true, email: user.email, emailStatus: emailResult.status, emailRetryable: emailResult.status === 'accepted' || Boolean(emailResult.retryable), ...(emailResult.testRecipient && { developmentCopy: true }), emailMessage: emailResult.status === 'accepted' ? emailResult.testRecipient ? 'Resend accepted a development test copy. Check the configured test inbox and the local admin email preview; inbox delivery is not confirmed.' : 'Resend accepted the verification request. Inbox delivery is not confirmed.' : emailResult.message || 'Verification email delivery is temporarily unavailable. Your account is saved; retry sending the link.' });
+    setCookie(res, await createSession(db, user, req));
+    res.status(201).json({ user: publicUser(user), business: publicBusiness(await business({ businessId: user.businessId })) });
   }));
 
   r.post('/auth/verify-email', rateLimit({ key: 'verify-email', limit: 10, windowMs: 3600e3 }), wrap(async (req, res) => {
@@ -143,9 +144,11 @@ export function createApi(db, { secureCookies }) {
     const ok = await verifyPassword(password, user?.passwordHash || DUMMY_HASH);
     if (!user || !ok) throw new HttpError(401, 'Email or password is incorrect');
     if (user.disabledAt || user.status === 'disabled') throw new HttpError(403, 'This account is disabled. Contact the workspace administrator.');
-    if (user.emailVerified !== true) throw new HttpError(403, 'Verify your email before signing in. Use the resend verification link to get a fresh message.');
-    setCookie(res, await createSession(db, user, req));
-    res.json({ user: publicUser(user), business: publicBusiness(await business({ businessId: user.businessId })) });
+    // Allow accounts created before confirmation was paused to sign in as well.
+    if (user.emailVerified !== true) await C('users').updateOne({ _id: user._id }, { $set: { emailVerified: true, emailVerificationDisabled: true } });
+    const sessionUser = user.emailVerified === true ? user : { ...user, emailVerified: true, emailVerificationDisabled: true };
+    setCookie(res, await createSession(db, sessionUser, req));
+    res.json({ user: publicUser(sessionUser), business: publicBusiness(await business({ businessId: user.businessId })) });
   }));
 
   r.post('/auth/logout', wrap(async (req, res) => {

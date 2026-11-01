@@ -1,6 +1,10 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "rewrites": [
+    {
+      "source": "/api/:path*",
+      "destination": "/api/index?__morgan_route=:path*"
+    },
     { "source": "/(.*)", "destination": "/index.html" }
   ]
 }

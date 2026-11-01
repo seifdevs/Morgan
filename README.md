@@ -37,7 +37,7 @@ Production serves the session cookie with `Secure`, so run it behind HTTPS.
 
 ## Deploying
 
-- **Vercel:** Vite serves the static app from `dist/`; `api/[...path].mjs` adapts Morgan's Express API to a Node.js Function, and `vercel.json` sends client-side routes back to `index.html`. Set `MONGODB_URI`, `MONGODB_DB`, `RESEND_API_KEY`, `MAIL_FROM`, and `APP_URL` in the Production environment. `MORGAN_ADMIN_EMAIL` is optional. Redeploy after changing environment variables. Health check: `GET /api/health` (pings MongoDB).
+- **Vercel:** Vite serves the static app from `dist/`; `api/index.mjs` adapts Morgan's Express API to a Node.js Function, and `vercel.json` forwards `/api/*` requests to it while sending client-side routes to the app. Set `MONGODB_URI`, `MONGODB_DB`, `RESEND_API_KEY`, `MAIL_FROM`, and `APP_URL` in the Production environment. `MORGAN_ADMIN_EMAIL` is optional. Redeploy after changing environment variables. Health check: `GET /api/health` (pings MongoDB).
 - **Long-running Node host (Render, Railway, Fly.io, VM):** Build with `npm ci && npm run build`, then run `npm start`. Keep the process behind HTTPS. The in-memory rate limiter is intended for one instance; use a shared store before scaling horizontally.
 - On first start it creates its indexes (unique `users.email`, unique `invoices.businessId+number`, TTL on `sessions.expiresAt`, and lookups by `businessId`). Use a database dedicated to Morgan (`MONGODB_DB`, default `morgan`).
 - Atlas: create a database user with `readWrite` on the Morgan database only, and allow the host's outbound IPs in the access list.

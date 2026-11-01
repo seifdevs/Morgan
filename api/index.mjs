@@ -23,9 +23,17 @@ async function getApp() {
 
       const app = express();
       app.use((req, _res, next) => {
-        // Vercel catch-all functions may pass the route-relative URL. Morgan's
-        // Express app is mounted with its /api prefix, so normalize either form.
-        if (!req.url.startsWith('/api/')) req.url = `/api/${req.url.replace(/^\/+/, '')}`;
+        // vercel.json rewrites /api/:path* to this fixed function and carries the
+        // original route as __morgan_route. Restore that URL before Express sees it.
+        const requestUrl = new URL(req.url, 'http://morgan.internal');
+        const routedPath = requestUrl.searchParams.get('__morgan_route');
+        if (routedPath) {
+          requestUrl.searchParams.delete('__morgan_route');
+          const suffix = requestUrl.searchParams.toString();
+          req.url = `/api/${routedPath.replace(/^\/+/, '')}${suffix ? `?${suffix}` : ''}`;
+        } else if (!req.url.startsWith('/api/')) {
+          req.url = `/api/${req.url.replace(/^\/+/, '')}`;
+        }
         next();
       });
       app.use(createApp(db, { secureCookies: true, trustProxy: true, csp: true }));

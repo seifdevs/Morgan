@@ -21,7 +21,7 @@ const modules = [
 ];
 
 export function Features() {
-  useDocumentTitle('Product');
+  useDocumentTitle('Financial management features for agencies', 'Explore Morgan workflows for agency spending analysis, invoices, bills, receivables, reports and cash-flow estimates.', { canonicalPath: '/features' });
   return (
     <div className="page">
       <PageIntro eyebrow="The Morgan platform" title={<>Make the financial picture <span className="serif gold">easier to follow.</span></>} lead="Spending, invoices, receivables, bills and cash flow share one workspace — and every summary links back to the records behind it." />
@@ -52,47 +52,39 @@ export function Features() {
 }
 
 export function Pricing() {
-  useDocumentTitle('Pricing');
-  const rows = [
-    ['Transactions, CSV import & spending analysis', 'Included', 'Included'],
-    ['Invoices, PDF export & payment tracking', 'Included', 'Included'],
-    ['Receivables & bills', 'Included', 'Included'],
-    ['Overview & monthly reports', 'Included', 'Included'],
-    ['Cash-flow projection & scenarios', 'Included today', 'Proposed inclusion'],
-    ['Bank & accounting integrations', 'Not available', 'Not available'],
+  useDocumentTitle('Pricing', 'Morgan is free to use today. Review planned Pro and Business monthly prices and what is currently available.');
+  const plans = [
+    { id: 'free', name: 'Free', price: '$0', state: 'Available now', summary: 'Start organizing the finances already in your records.', action: 'Create free account', to: '/signup', featured: false },
+    { id: 'pro', name: 'Pro', price: '$49.99', state: 'Planned price', summary: 'A proposed paid tier for businesses reviewing their finances regularly.', action: 'Explore current access', to: '#current-access', featured: true },
+    { id: 'business', name: 'Business', price: '$199.99', state: 'Planned price', summary: 'A proposed tier for businesses with broader financial oversight needs.', action: 'Explore current access', to: '#current-access', featured: false },
   ];
   return (
     <div className="page">
-      <PageIntro eyebrow="Pricing · Proposed plans" title={<>A clear place to start. <span className="serif gold">Room to grow.</span></>} lead="Morgan’s plan structure and pricing are still being shaped. The figures below are proposals, not confirmed offers or active subscriptions." />
-      <div className="plans">
-        <article className="plan">
-          <div className="plan-top"><h2>Free</h2><span className="badge draft">Proposed</span></div>
-          <div className="plan-price"><span className="num">$0</span><small>/ month</small></div>
-          <p>For businesses that want a clearer view of records, cash and obligations.</p>
-          <ul className="ticks"><li>All current workspace features</li><li>Unlimited records during early access</li><li>CSV import and export</li></ul>
-          <Link className="btn outline" to="/signup">Create account</Link>
-        </article>
-        <article className="plan pro">
-          <div className="plan-top"><h2>Professional</h2><span className="badge estimate">Proposed</span></div>
-          <div className="plan-price"><span className="num">$49.99</span><small>/ month</small></div>
-          <p>A proposed next step for growing businesses that need deeper analysis and planning.</p>
-          <ul className="ticks"><li>Everything in Free</li><li>Extended scenario planning</li><li>More detailed financial analysis</li></ul>
-          <Link className="btn primary" to="/signup">Start free today</Link>
-        </article>
+      <PageIntro eyebrow="Plans & pricing" title={<>Straightforward pricing. <span className="serif gold">Transparent status.</span></>} lead="Morgan is free to use today. Pro is planned at $49.99 per month and Business at $199.99 per month; paid billing is not active yet." />
+      <div className="plans pricing-plans">
+        {plans.map((plan) => (
+          <article className={`plan ${plan.featured ? 'pro' : ''}`} id={plan.id} key={plan.id}>
+            <div className="plan-top"><h2>{plan.name}</h2><span className={`badge ${plan.id === 'free' ? 'available' : 'estimate'}`}>{plan.state}</span></div>
+            <div className="plan-price"><span className="num">{plan.price}</span><small>/ month</small></div>
+            <p>{plan.summary}</p>
+            <ul className="ticks">
+              {plan.id === 'free' ? <><li>Transactions, CSV import and spending analysis</li><li>Invoices, PDF export and payment tracking</li><li>Receivables, bills, reports and cash estimates</li></> : <><li>Current workspace features remain available</li><li>No paid access or plan-specific features are active</li><li>No charge is made when you create an account</li></>}
+            </ul>
+            <Link className={`btn ${plan.featured ? 'primary' : 'outline'}`} to={plan.to}>{plan.action}</Link>
+          </article>
+        ))}
       </div>
-      <p className="fine center">No paid plan is available for purchase. Feature access, limits and billing terms have not been finalised.</p>
-      <div className="panel table-wrap" style={{ marginTop: 40 }}>
-        <table className="table">
-          <thead><tr><th>Capability</th><th>Free (proposed)</th><th>Professional (proposed)</th></tr></thead>
-          <tbody>{rows.map((r) => <tr key={r[0]}>{r.map((v, i) => <td key={i} className={i ? 'muted' : ''}>{v}</td>)}</tr>)}</tbody>
-        </table>
-      </div>
+      <section id="current-access" className="pricing-current panel">
+        <div><span className="eyebrow gold">What is available today</span><h2>One complete workspace, free to start.</h2><p>Morgan currently provides the same available product features to every account. Pro and Business prices are planned, but there is no checkout, subscription, usage limit or feature gate tied to those plans today.</p></div>
+        <ul className="ticks"><li>Track transactions with CSV import and spending analysis</li><li>Create invoices, export PDFs and record payments</li><li>Review receivables, bills and monthly reports</li><li>Explore a 13-week cash estimate and scenarios</li></ul>
+        <p className="fine">Morgan works alongside accounting software and professional advice. Cash projections are estimates based on recorded activity and stated assumptions.</p>
+      </section>
     </div>
   );
 }
 
 export function About() {
-  useDocumentTitle('About');
+  useDocumentTitle('About Morgan', 'Learn why founder Seif is building Morgan as a practical financial management and insight layer for small and growing businesses.');
   return (
     <div className="page">
       <PageIntro eyebrow="About Morgan" title={<>Make business finances <span className="serif gold">make more sense.</span></>} lead="Morgan exists to help business owners see their financial position more clearly and understand the information behind the decisions they make." />
@@ -114,7 +106,7 @@ export function About() {
 }
 
 export function Resources() {
-  useDocumentTitle('Resources');
+  useDocumentTitle('Financial management resources for agencies', 'Practical guides to agency cash position, receivables aging, cash-flow assumptions, document review and monthly financial reviews.');
   return (
     <div className="page">
       <PageIntro eyebrow="Morgan field notes" title={<>Useful context for the <span className="serif gold">numbers behind your business.</span></>} lead="Practical guides to cash, obligations, records and estimates. General information, not accounting or financial advice." />
@@ -136,7 +128,7 @@ export function Resources() {
 export function ResourceDetail() {
   const { slug } = useParams();
   const g = guides.find((x) => x.slug === slug);
-  useDocumentTitle(g?.title || 'Resources');
+  useDocumentTitle(g?.title || 'Resources', g?.intro || 'Financial management guides from Morgan.', { indexable: Boolean(g) });
   if (!g) return <Navigate to="/resources" replace />;
   return (
     <article className="page article">
@@ -153,7 +145,7 @@ export function ResourceDetail() {
 }
 
 export function Faq() {
-  useDocumentTitle('FAQ');
+  useDocumentTitle('Morgan FAQ', 'Answers about Morgan’s financial workflows, data sources, invoicing, reports, account security and proposed pricing.');
   return (
     <div className="page narrow">
       <PageIntro eyebrow="FAQ" title={<>Questions, <span className="serif gold">answered plainly.</span></>} lead="What Morgan does today, how your data is handled, and what is still being decided." />
@@ -173,7 +165,7 @@ export function Faq() {
 }
 
 export function Contact() {
-  useDocumentTitle('Contact');
+  useDocumentTitle('Contact Morgan', 'Contact information for Morgan product questions and feedback.', { indexable: false });
   return (
     <div className="page narrow">
       <PageIntro eyebrow="Contact" title={<>Get in touch <span className="serif gold">with Morgan.</span></>} lead="For product questions, partnerships or feedback, use the Morgan contact channel that was shared with you directly." />
@@ -193,7 +185,7 @@ export function Contact() {
 }
 
 export function NotFound() {
-  useDocumentTitle('Not found');
+  useDocumentTitle('Page not found', 'This Morgan page could not be found.', { indexable: false });
   return (
     <div className="page narrow" style={{ textAlign: 'center' }}>
       <div className="eyebrow gold">404</div>

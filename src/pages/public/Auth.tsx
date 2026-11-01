@@ -57,7 +57,7 @@ function LoginStage({ headline, sub }: { headline: ReactNode; sub: string }) {
 
 export function Auth({ mode }: { mode: 'login' | 'signup' }) {
   const signup = mode === 'signup';
-  useDocumentTitle(signup ? 'Create account' : 'Log in');
+  useDocumentTitle(signup ? 'Create a Morgan account' : 'Log in to Morgan', signup ? 'Create a Morgan workspace to organize business finances and review your cash flow.' : 'Sign in to your Morgan financial workspace.', { indexable: false });
   const { user, setSession, loading, passwordResetAvailable } = useAuth();
   const loc = useLocation();
   const next = (loc.state as { from?: string } | null)?.from || '/app';
@@ -156,7 +156,7 @@ function ResendVerification({ initialEmail = '' }: { initialEmail?: string }) {
 }
 
 export function VerifyEmail() {
-  useDocumentTitle('Verify your email');
+  useDocumentTitle('Verify your email', 'Complete email verification for your Morgan account.', { indexable: false });
   const [params] = useSearchParams();
   const token = params.get('token') || '';
   const [state, setState] = useState<'busy' | 'verified' | 'error'>(token ? 'busy' : 'error');
@@ -171,7 +171,7 @@ export function VerifyEmail() {
 }
 
 export function ForgotPassword() {
-  useDocumentTitle('Reset password');
+  useDocumentTitle('Reset your Morgan password', 'Request a secure password reset link for your Morgan account.', { indexable: false });
   const { passwordResetAvailable, loading } = useAuth();
   const [state, setState] = useState<'idle' | 'busy' | 'sent'>('idle');
   const [error, setError] = useState('');
@@ -203,7 +203,7 @@ export function ForgotPassword() {
 }
 
 export function ResetPassword() {
-  useDocumentTitle('Choose a new password');
+  useDocumentTitle('Choose a new Morgan password', 'Choose a new password for your Morgan account.', { indexable: false });
   const [params] = useSearchParams();
   const nav = useNavigate();
   const [pw, setPw] = useState('');

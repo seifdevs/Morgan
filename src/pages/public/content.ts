@@ -24,7 +24,7 @@ export const faqs: [string, [string, string][]][] = [
     ['Does Morgan collect payments?', 'No. Morgan records payments you receive so balances and receivables stay accurate. It does not process cards or move money.'],
   ]],
   ['Pricing', [
-    ['Are the Free and Professional plans final?', 'No. Plan packaging is proposed. Professional at $49.99 per month is an unconfirmed draft price; billing, limits, and entitlements are not finalized.'],
-    ['Can I buy a plan?', 'No. Creating an account does not collect payment information or create a subscription.'],
+    ['What does Morgan cost today?', 'Morgan is free to use today. Pro at $49.99 per month and Business at $199.99 per month are planned prices; paid checkout is not active.'],
+    ['Can I buy Pro or Business?', 'Not yet. There is no checkout, subscription, plan-specific feature access, or charge. Creating an account gives you access to the current workspace without payment details.'],
   ]],
 ];

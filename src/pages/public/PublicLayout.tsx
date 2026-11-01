@@ -6,6 +6,7 @@ import { useAuth } from '../../lib/auth';
 
 const links = [
   { to: '/features', label: 'Product' },
+  { to: '/agency-financial-management', label: 'Agencies' },
   { to: '/pricing', label: 'Pricing' },
   { to: '/resources', label: 'Resources' },
   { to: '/about', label: 'About' },
@@ -111,7 +112,7 @@ function Footer() {
           <p className="pf-line">Clarity without shortcuts, <span className="serif">confidence without overstatement.</span></p>
         </div>
         <nav className="pf-cols" aria-label="Footer">
-          <div><h4>Product</h4><Link to="/features">Overview</Link><Link to="/pricing">Pricing</Link><Link to="/signup">Create account</Link><Link to="/login">Log in</Link></div>
+          <div><h4>Product</h4><Link to="/features">Overview</Link><Link to="/agency-financial-management">For agencies</Link><Link to="/agency-cash-flow">Agency cash flow</Link><Link to="/agency-profitability">Agency profitability</Link><Link to="/pricing">Pricing</Link><Link to="/signup">Create account</Link><Link to="/login">Log in</Link></div>
           <div><h4>Company</h4><Link to="/about">About</Link><Link to="/contact">Contact</Link></div>
           <div><h4>Resources</h4><Link to="/resources">Guides</Link><Link to="/faq">FAQ</Link></div>
         </nav>

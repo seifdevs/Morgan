@@ -1,7 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Link } from 'react-router-dom';
 import { AnimatePresence, m, useMotionValueEvent, useReducedMotion, useScroll, useSpring, useTransform } from 'motion/react';
-import { Icon } from './ui';
 
 /*
   The Ledger Line. One full-bleed cash line runs through the hero and splits the headline:
@@ -145,10 +143,6 @@ export function LedgerHero() {
 
       <div className="lh-foot">
         <p className="lh-lead">Spending, invoices, receivables, bills and cash flow in one calm workspace — every figure traceable to the record behind it.</p>
-        <div className="lh-ctas">
-          <Link className="btn primary lg" to="/signup">Open your ledger <Icon name="upRight" size={15} className="arrow" /></Link>
-          <a className="lh-watch" href="#money-flow">Watch money move <Icon name="down" size={15} /></a>
-        </div>
         <p className="lh-key" aria-hidden="true">
           <span><svg width="28" height="6"><line x1="1" y1="3" x2="27" y2="3" stroke="#c9a86a" strokeWidth="2.5" strokeLinecap="round" /></svg>Recorded</span>
           <span><svg width="28" height="6"><line x1="1" y1="3" x2="27" y2="3" stroke="#b9c1c7" strokeWidth="2" strokeDasharray="4 4" strokeLinecap="round" /></svg>Estimate</span>

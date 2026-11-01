@@ -1,5 +1,5 @@
 import { StrictMode, Suspense, lazy } from 'react';
-import { createRoot } from 'react-dom/client';
+import { createRoot, hydrateRoot } from 'react-dom/client';
 import { BrowserRouter, Route, Routes } from 'react-router-dom';
 import { LazyMotion, MotionConfig } from 'motion/react';
 const motionFeatures = () => import('./lib/motionFeatures').then((m) => m.default);
@@ -9,6 +9,7 @@ import { ToastProvider, LoadingRows } from './components/ui';
 import { RenderBoundary } from './components/RenderBoundary';
 import { PublicLayout } from './pages/public/PublicLayout';
 import Home from './pages/public/Home';
+import { AgencyPage } from './pages/public/AgencyPages';
 import { About, Contact, Faq, Features, NotFound, Pricing, ResourceDetail, Resources } from './pages/public/Pages';
 import { Auth, ForgotPassword, ResetPassword, VerifyEmail } from './pages/public/Auth';
 import { Logout, RequireAdminRoute, RequireAuth } from './pages/app/AppLayout';
@@ -40,7 +41,7 @@ const Admin = lazy(() => import('./pages/app/Admin'));
 
 const page = (el: React.ReactNode) => <Suspense fallback={<div className="panel"><LoadingRows rows={6} /></div>}>{el}</Suspense>;
 
-createRoot(document.getElementById('root')!).render(
+const app = (
   <StrictMode>
     <LazyMotion features={motionFeatures} strict>
     <MotionConfig reducedMotion="user">
@@ -54,6 +55,9 @@ createRoot(document.getElementById('root')!).render(
               <Route index element={<Home />} />
               <Route path="features" element={<Features />} />
               <Route path="product/*" element={<Features />} />
+              <Route path="agency-financial-management" element={<AgencyPage topic="management" />} />
+              <Route path="agency-cash-flow" element={<AgencyPage topic="cashflow" />} />
+              <Route path="agency-profitability" element={<AgencyPage topic="profitability" />} />
               <Route path="pricing" element={<Pricing />} />
               <Route path="about" element={<About />} />
               <Route path="resources" element={<Resources />} />
@@ -98,5 +102,13 @@ createRoot(document.getElementById('root')!).render(
     </BrowserRouter>
     </MotionConfig>
     </LazyMotion>
-  </StrictMode>,
+  </StrictMode>
 );
+
+const root = document.getElementById('root')!;
+if (root.dataset.morganSsr === 'true') {
+  delete root.dataset.morganSsr;
+  hydrateRoot(root, app);
+} else {
+  createRoot(root).render(app);
+}

@@ -5,6 +5,215 @@
       "source": "/api/:path*",
       "destination": "/api/index?__morgan_route=:path*"
     },
-    { "source": "/(.*)", "destination": "/index.html" }
-  ]
+    {
+      "source": "/features",
+      "destination": "/seo-pages/features.html"
+    },
+    {
+      "source": "/pricing",
+      "destination": "/seo-pages/pricing.html"
+    },
+    {
+      "source": "/about",
+      "destination": "/seo-pages/about.html"
+    },
+    {
+      "source": "/resources",
+      "destination": "/seo-pages/resources.html"
+    },
+    {
+      "source": "/resources/cash-position",
+      "destination": "/seo-pages/resources-cash-position.html"
+    },
+    {
+      "source": "/resources/receivables-aging",
+      "destination": "/seo-pages/resources-receivables-aging.html"
+    },
+    {
+      "source": "/resources/forecast-assumptions",
+      "destination": "/seo-pages/resources-forecast-assumptions.html"
+    },
+    {
+      "source": "/resources/document-review",
+      "destination": "/seo-pages/resources-document-review.html"
+    },
+    {
+      "source": "/resources/business-planning",
+      "destination": "/seo-pages/resources-business-planning.html"
+    },
+    {
+      "source": "/resources/monthly-review",
+      "destination": "/seo-pages/resources-monthly-review.html"
+    },
+    {
+      "source": "/faq",
+      "destination": "/seo-pages/faq.html"
+    },
+    {
+      "source": "/contact",
+      "destination": "/seo-pages/contact.html"
+    },
+    {
+      "source": "/agency-financial-management",
+      "destination": "/seo-pages/agency-financial-management.html"
+    },
+    {
+      "source": "/agency-cash-flow",
+      "destination": "/seo-pages/agency-cash-flow.html"
+    },
+    {
+      "source": "/agency-profitability",
+      "destination": "/seo-pages/agency-profitability.html"
+    },
+    {
+      "source": "/app",
+      "destination": "/spa.html"
+    },
+    {
+      "source": "/app/:path*",
+      "destination": "/spa.html"
+    },
+    {
+      "source": "/admin",
+      "destination": "/spa.html"
+    },
+    {
+      "source": "/admin/:path*",
+      "destination": "/spa.html"
+    },
+    {
+      "source": "/login",
+      "destination": "/spa.html"
+    },
+    {
+      "source": "/signup",
+      "destination": "/spa.html"
+    },
+    {
+      "source": "/logout",
+      "destination": "/spa.html"
+    },
+    {
+      "source": "/forgot-password",
+      "destination": "/spa.html"
+    },
+    {
+      "source": "/reset-password",
+      "destination": "/spa.html"
+    },
+    {
+      "source": "/verify-email",
+      "destination": "/spa.html"
+    },
+    {
+      "source": "/product",
+      "destination": "/spa.html"
+    },
+    {
+      "source": "/product/:path*",
+      "destination": "/spa.html"
+    }
+  ],
+  "headers": [
+    {
+      "source": "/app",
+      "headers": [
+        {
+          "key": "X-Robots-Tag",
+          "value": "noindex, nofollow"
+        }
+      ]
+    },
+    {
+      "source": "/app/:path*",
+      "headers": [
+        {
+          "key": "X-Robots-Tag",
+          "value": "noindex, nofollow"
+        }
+      ]
+    },
+    {
+      "source": "/admin",
+      "headers": [
+        {
+          "key": "X-Robots-Tag",
+          "value": "noindex, nofollow"
+        }
+      ]
+    },
+    {
+      "source": "/admin/:path*",
+      "headers": [
+        {
+          "key": "X-Robots-Tag",
+          "value": "noindex, nofollow"
+        }
+      ]
+    },
+    {
+      "source": "/login",
+      "headers": [
+        {
+          "key": "X-Robots-Tag",
+          "value": "noindex, nofollow"
+        }
+      ]
+    },
+    {
+      "source": "/signup",
+      "headers": [
+        {
+          "key": "X-Robots-Tag",
+          "value": "noindex, nofollow"
+        }
+      ]
+    },
+    {
+      "source": "/logout",
+      "headers": [
+        {
+          "key": "X-Robots-Tag",
+          "value": "noindex, nofollow"
+        }
+      ]
+    },
+    {
+      "source": "/forgot-password",
+      "headers": [
+        {
+          "key": "X-Robots-Tag",
+          "value": "noindex, nofollow"
+        }
+      ]
+    },
+    {
+      "source": "/reset-password",
+      "headers": [
+        {
+          "key": "X-Robots-Tag",
+          "value": "noindex, nofollow"
+        }
+      ]
+    },
+    {
+      "source": "/verify-email",
+      "headers": [
+        {
+          "key": "X-Robots-Tag",
+          "value": "noindex, nofollow"
+        }
+      ]
+    },
+    {
+      "source": "/api/:path*",
+      "headers": [
+        {
+          "key": "X-Robots-Tag",
+          "value": "noindex, nofollow"
+        }
+      ]
+    }
+  ],
+  "trailingSlash": false
 }

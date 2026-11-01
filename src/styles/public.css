@@ -61,6 +61,8 @@
 .module h2 { margin: 18px 0 10px; }
 .module-icon { display: inline-grid; place-items: center; width: 44px; height: 44px; border: 1px solid #c9a86a55; color: var(--gold); }
 .module-lead { font-size: 18px; color: var(--soft); }
+.agency-sections .module { padding: 52px 0; }
+.agency-sections .module-copy { grid-column: 1 / 11; }
 .also { display: grid; grid-template-columns: repeat(12, minmax(0, 1fr)); column-gap: 24px; padding: 96px 0 24px; }
 .also h2 { grid-column: 1 / 5; font-size: clamp(28px, 3vw, 40px) !important; }
 .also-grid { grid-column: 6 / 13; display: grid; grid-template-columns: 1fr 1fr; border-top: 1px solid var(--line); }
@@ -74,7 +76,7 @@
 .cta-band h2 { grid-column: 1 / 9; }
 .cta-band .btn { grid-column: 10 / 13; justify-self: start; }
 
-/* Pricing: deliberately unequal plans */
+/* Pricing */
 .plans { display: grid; grid-template-columns: repeat(12, minmax(0, 1fr)); column-gap: 24px; align-items: start; }
 .plan { background: var(--surface); border: 1px solid var(--line); padding: 36px; display: flex; flex-direction: column; gap: 16px; }
 .plan:first-child { grid-column: 1 / 6; }
@@ -86,6 +88,20 @@
 .plan p { color: var(--muted); }
 .plan .btn { align-self: flex-start; margin-top: 8px; }
 .fine.center { margin-top: 24px; max-width: 520px; }
+.pricing-plans { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; }
+.pricing-plans .plan, .pricing-plans .plan:first-child, .pricing-plans .plan.pro { grid-column: auto; margin: 0; padding: 28px; border-radius: 5px; }
+.pricing-plans .plan.pro { border-color: #a2875799; border-top: 2px solid var(--gold); }
+.pricing-plans .plan-price span { font-size: clamp(38px, 3.2vw, 54px); }
+.pricing-plans .plan-price small { font-size: 12px; }
+.pricing-plans .plan p { line-height: 1.6; min-height: 52px; }
+.pricing-plans .ticks { padding-left: 20px; font-size: 13px; line-height: 1.55; }
+.pricing-plans .btn { margin-top: auto; }
+.badge.available { color: var(--green); background: #2f9b7018; border-color: #2f9b7040; }
+.pricing-current { display: grid; grid-template-columns: 1.15fr .85fr; gap: 12px 40px; margin-top: 64px; padding: clamp(24px, 4vw, 44px); }
+.pricing-current h2 { margin: 12px 0; font-size: clamp(26px, 3vw, 38px) !important; }
+.pricing-current p { color: var(--muted); line-height: 1.7; }
+.pricing-current .ticks { align-self: center; }
+.pricing-current .fine { grid-column: 1 / -1; margin: 0; }
 
 .about-vision { display: grid; grid-template-columns: repeat(12, minmax(0, 1fr)); column-gap: 24px; }
 .about-vision h2 { grid-column: 1 / 6; font-size: clamp(30px, 3.4vw, 46px) !important; }
@@ -192,8 +208,12 @@
   .module-art { margin-top: 40px; }
   .also h2, .also-grid { grid-column: 1 / 13; }
   .also h2 { margin-bottom: 24px; }
-  .plan:first-child, .plan.pro { grid-column: 1 / 13; margin-top: 0; }
+  .plan:first-child, .plan.pro, .pricing-plans .plan, .pricing-plans .plan:first-child, .pricing-plans .plan.pro { grid-column: 1 / 13; margin-top: 0; }
   .plan.pro { margin-top: 20px; }
+  .pricing-plans .plan.pro { margin-top: 0; }
+  .pricing-plans { grid-template-columns: 1fr; }
+  .pricing-current { grid-template-columns: 1fr; }
+  .pricing-current .fine { grid-column: 1; }
   .about-vision h2, .about-vision p, .about-founder .founder-art, .about-founder .founder-copy { grid-column: 1 / 13; }
   .about-founder .founder-art { max-width: 300px; margin-bottom: 32px; }
   .article > *, .article .lead, .article-steps, .article .fine { grid-column: 1 / 13; }
@@ -205,6 +225,8 @@
   .auth.login .auth-panel, .auth.signup .auth-panel { grid-column: 1 / 13; }
 }
 @media (max-width: 760px) {
+  .page-intro h1 { font-size: clamp(32px, 10.5vw, 46px); letter-spacing: -0.055em; }
+  .page-intro .pi-title { min-width: 0; }
   .also-grid { grid-template-columns: 1fr; }
   .also-grid > div:nth-child(even) { padding-left: 0; border-left: 0; }
   .guide-list a { grid-template-columns: 40px 1fr; }

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { m, useMotionValueEvent, useReducedMotion, useScroll, useTransform } from 'motion/react';
 import { formatMoney } from '../../shared/money.js';
+import { SAMPLE_LAST_RECORDED_WEEK as TODAY_AFTER, SAMPLE_OPENING_CENTS as OPENING, SAMPLE_WEEKS as WEEKS } from '../lib/financialSample';
 
 /*
   "Follow money in, and out." — a weekly cash statement that the visitor scrubs by scrolling.
@@ -9,22 +10,6 @@ import { formatMoney } from '../../shared/money.js';
   Every week is a button that opens the entries behind it. Phones and reduced motion get the full,
   unpinned statement. Sample figures, integer cents.
 */
-type Entry = { who: string; what: string; cents: number };
-type Week = { start: string; est: boolean; entries: Entry[] };
-
-const OPENING = 5_840_000;
-const WEEKS: Week[] = [
-  { start: 'Sep 15', est: false, entries: [{ who: 'Meridian Labs', what: 'Retainer', cents: 1_120_000 }, { who: 'Harbor Workspace', what: 'Rent', cents: -185_000 }, { who: 'Cloudline', what: 'Hosting', cents: -68_400 }] },
-  { start: 'Sep 22', est: false, entries: [{ who: 'Aster & Row', what: 'Project payment', cents: 740_000 }, { who: 'Gusto', what: 'Payroll', cents: -1_420_000 }] },
-  { start: 'Sep 29', est: false, entries: [{ who: 'Cedar House', what: 'INV-0101', cents: 970_000 }, { who: 'Figma', what: 'Design tools', cents: -18_000 }, { who: 'West & Pine', what: 'Supplies', cents: -41_250 }] },
-  { start: 'Oct 6', est: false, entries: [{ who: 'Meridian Labs', what: 'Retainer', cents: 1_120_000 }, { who: 'Harbor Workspace', what: 'Rent', cents: -185_000 }, { who: 'Alaska Air', what: 'Team travel', cents: -127_540 }] },
-  { start: 'Oct 13', est: false, entries: [{ who: 'Cedar House', what: 'INV-0108', cents: 1_234_050 }, { who: 'Gusto', what: 'Payroll', cents: -1_420_000 }] },
-  { start: 'Oct 20', est: true, entries: [{ who: 'Meridian Labs', what: 'NW-0002 due Oct 22', cents: 692_500 }, { who: 'Harbor Workspace', what: 'Bill due Oct 26', cents: -185_000 }] },
-  { start: 'Oct 27', est: true, entries: [{ who: 'Aster & Row', what: 'NW-0003 due Oct 30', cents: 450_000 }, { who: 'Fieldwork Creative', what: 'Bill due Oct 31', cents: -320_000 }] },
-  { start: 'Nov 3', est: true, entries: [{ who: 'Meridian Labs', what: 'NW-0004 due Nov 7', cents: 58_249 }, { who: 'Gusto', what: 'Payroll (recurring)', cents: -1_420_000 }] },
-];
-const TODAY_AFTER = 4; // index of the last recorded week
-
 const STEPS = [
   { title: 'Money in', body: 'Client payments and retainers rise from the opening balance as gold bars.' },
   { title: 'Money out', body: 'Payroll, rent and software draw it back down. Every bar is a recorded transaction.' },
@@ -46,10 +31,11 @@ const progressForWeek = (i: number) => 0.03 + 0.9 * Math.min(1, (i + 0.8) / 8);
 
 function useWide() {
   const q = '(min-width: 1100px) and (min-height: 780px)'; // pin only where the whole statement fits one screen
-  const [wide, setWide] = useState(() => typeof window !== 'undefined' && window.matchMedia(q).matches);
+  const [wide, setWide] = useState(false);
   useEffect(() => {
     const mq = window.matchMedia(q);
     const on = () => setWide(mq.matches);
+    on();
     mq.addEventListener('change', on);
     return () => mq.removeEventListener('change', on);
   }, []);
@@ -126,6 +112,7 @@ export function MoneyFlow() {
     <section ref={ref} id="money-flow" className={`mf ${pinned ? 'pinned' : ''}`} aria-labelledby="mf-title">
       <div className="mf-stage">
         <div className="mf-copy">
+          <span className="folio"><span>N°04</span><b>Cash in motion</b></span>
           <h2 id="mf-title">Follow money in, <span className="serif">and out.</span></h2>
           <p className="mf-lead">Eight weeks of a sample business’s cash, posted the way Morgan posts yours: from records, week by week — until today, where the ink stops.</p>
           <ol className="mf-steps">
@@ -161,7 +148,7 @@ export function MoneyFlow() {
               <g key={t}><line className="mf-grid" x1={L} x2={W - R} y1={y(t)} y2={y(t)} /><text className="mf-axis" x={L - 10} y={y(t) + 4} textAnchor="end">{short(t)}</text></g>
             ))}
             <line className="mf-opening" x1={L} x2={W - R} y1={y(OPENING)} y2={y(OPENING)} />
-            <text className="mf-axis mf-axis-open" x={L - 10} y={y(OPENING) + 4} textAnchor="end">{short(OPENING)}<title>Opening balance {fmt(OPENING)}</title></text>
+            <text className="mf-axis mf-axis-open" x={L - 10} y={y(OPENING) + 4} textAnchor="end">{short(OPENING)}<title>{`Opening balance ${fmt(OPENING)}`}</title></text>
 
             <g className="mf-today">
               <line x1={todayX} x2={todayX} y1={T - 12} y2={H - B} />

@@ -7,6 +7,7 @@
     "dev": "node --env-file-if-exists=.env server/index.mjs",
     "dev:local": "node --env-file-if-exists=.env server/local.mjs",
     "test:resend": "node --env-file-if-exists=.env scripts/test-resend.mjs",
+    "banks:refresh": "node scripts/refresh-bank-directory.mjs",
     "build": "tsc --noEmit && vite build && node scripts/prerender.mjs",
     "start": "node --env-file-if-exists=.env server/index.mjs --prod",
     "typecheck": "tsc --noEmit",

@@ -1,0 +1,609 @@
+{
+  "country": "US",
+  "currency": "USD",
+  "source": "https://api.fdic.gov/banks/institutions?filters=ACTIVE:1&sort_by=ASSET&sort_order=DESC",
+  "sourceName": "FDIC BankFind Suite · active insured institutions ranked by reported assets",
+  "updatedAt": "2026-11-02T10:36:05.266Z",
+  "banks": [
+    {
+      "id": "628",
+      "name": "JPMorgan Chase Bank, National Association",
+      "state": "Ohio",
+      "rank": 1
+    },
+    {
+      "id": "3510",
+      "name": "Bank of America, National Association",
+      "state": "North Carolina",
+      "rank": 2
+    },
+    {
+      "id": "7213",
+      "name": "Citibank, National Association",
+      "state": "South Dakota",
+      "rank": 3
+    },
+    {
+      "id": "3511",
+      "name": "Wells Fargo Bank, National Association",
+      "state": "South Dakota",
+      "rank": 4
+    },
+    {
+      "id": "33124",
+      "name": "Goldman Sachs Bank USA",
+      "state": "New York",
+      "rank": 5
+    },
+    {
+      "id": "6548",
+      "name": "U.S. Bank National Association",
+      "state": "Ohio",
+      "rank": 6
+    },
+    {
+      "id": "4297",
+      "name": "Capital One, National Association",
+      "state": "Virginia",
+      "rank": 7
+    },
+    {
+      "id": "6384",
+      "name": "PNC Bank, National Association",
+      "state": "Delaware",
+      "rank": 8
+    },
+    {
+      "id": "9846",
+      "name": "Truist Bank",
+      "state": "North Carolina",
+      "rank": 9
+    },
+    {
+      "id": "639",
+      "name": "The Bank of New York Mellon",
+      "state": "New York",
+      "rank": 10
+    },
+    {
+      "id": "32992",
+      "name": "Morgan Stanley Bank, National Association",
+      "state": "Utah",
+      "rank": 11
+    },
+    {
+      "id": "14",
+      "name": "State Street Bank and Trust Company",
+      "state": "Massachusetts",
+      "rank": 12
+    },
+    {
+      "id": "18409",
+      "name": "TD Bank, National Association",
+      "state": "Delaware",
+      "rank": 13
+    },
+    {
+      "id": "6672",
+      "name": "Fifth Third Bank, National Association",
+      "state": "Ohio",
+      "rank": 14
+    },
+    {
+      "id": "6560",
+      "name": "The Huntington National Bank",
+      "state": "Ohio",
+      "rank": 15
+    },
+    {
+      "id": "16571",
+      "name": "BMO Bank National Association",
+      "state": "Illinois",
+      "rank": 16
+    },
+    {
+      "id": "57450",
+      "name": "Charles Schwab Bank, SSB",
+      "state": "Texas",
+      "rank": 17
+    },
+    {
+      "id": "34221",
+      "name": "Morgan Stanley Private Bank, National Association",
+      "state": "New York",
+      "rank": 18
+    },
+    {
+      "id": "11063",
+      "name": "First-Citizens Bank & Trust Company",
+      "state": "North Carolina",
+      "rank": 19
+    },
+    {
+      "id": "57957",
+      "name": "Citizens Bank, National Association",
+      "state": "Rhode Island",
+      "rank": 20
+    },
+    {
+      "id": "588",
+      "name": "Manufacturers and Traders Trust Company",
+      "state": "New York",
+      "rank": 21
+    },
+    {
+      "id": "27471",
+      "name": "American Express National  Bank",
+      "state": "Utah",
+      "rank": 22
+    },
+    {
+      "id": "17534",
+      "name": "KeyBank National Association",
+      "state": "Ohio",
+      "rank": 23
+    },
+    {
+      "id": "57803",
+      "name": "Ally Bank",
+      "state": "Utah",
+      "rank": 24
+    },
+    {
+      "id": "913",
+      "name": "The Northern Trust Company",
+      "state": "Illinois",
+      "rank": 25
+    },
+    {
+      "id": "57890",
+      "name": "HSBC Bank USA, National Association",
+      "state": "Virginia",
+      "rank": 26
+    },
+    {
+      "id": "12368",
+      "name": "Regions Bank",
+      "state": "Alabama",
+      "rank": 27
+    },
+    {
+      "id": "35583",
+      "name": "Pinnacle Bank",
+      "state": "Tennessee",
+      "rank": 28
+    },
+    {
+      "id": "57565",
+      "name": "UBS Bank USA, National Association",
+      "state": "Utah",
+      "rank": 29
+    },
+    {
+      "id": "27314",
+      "name": "Synchrony Bank",
+      "state": "Utah",
+      "rank": 30
+    },
+    {
+      "id": "32188",
+      "name": "USAA Federal Savings Bank",
+      "state": "Arizona",
+      "rank": 31
+    },
+    {
+      "id": "29950",
+      "name": "Santander Bank, N.A.",
+      "state": "Delaware",
+      "rank": 32
+    },
+    {
+      "id": "17281",
+      "name": "City National Bank",
+      "state": "California",
+      "rank": 33
+    },
+    {
+      "id": "57512",
+      "name": "Western Alliance Bank",
+      "state": "Arizona",
+      "rank": 34
+    },
+    {
+      "id": "2270",
+      "name": "Zions Bancorporation, N.A.",
+      "state": "Utah",
+      "rank": 35
+    },
+    {
+      "id": "32541",
+      "name": "Flagstar Bank, National Association",
+      "state": "New York",
+      "rank": 36
+    },
+    {
+      "id": "31628",
+      "name": "East West Bank",
+      "state": "California",
+      "rank": 37
+    },
+    {
+      "id": "4977",
+      "name": "First Horizon Bank",
+      "state": "Tennessee",
+      "rank": 38
+    },
+    {
+      "id": "3832",
+      "name": "Old National Bank",
+      "state": "Indiana",
+      "rank": 39
+    },
+    {
+      "id": "8273",
+      "name": "UMB Bank, National Association",
+      "state": "Missouri",
+      "rank": 40
+    },
+    {
+      "id": "33555",
+      "name": "SouthState Bank, National Association",
+      "state": "Florida",
+      "rank": 41
+    },
+    {
+      "id": "33306",
+      "name": "CIBC Bank USA",
+      "state": "Illinois",
+      "rank": 42
+    },
+    {
+      "id": "9396",
+      "name": "Valley National Bank",
+      "state": "New Jersey",
+      "rank": 43
+    },
+    {
+      "id": "17266",
+      "name": "Columbia Bank",
+      "state": "Oregon",
+      "rank": 44
+    },
+    {
+      "id": "34968",
+      "name": "Banco Popular de Puerto Rico",
+      "state": "Puerto Rico",
+      "rank": 45
+    },
+    {
+      "id": "26881",
+      "name": "SoFi Bank, National Association",
+      "state": "Utah",
+      "rank": 46
+    },
+    {
+      "id": "5510",
+      "name": "Frost  Bank",
+      "state": "Texas",
+      "rank": 47
+    },
+    {
+      "id": "4214",
+      "name": "BOKF, National Association",
+      "state": "Oklahoma",
+      "rank": 48
+    },
+    {
+      "id": "5296",
+      "name": "Associated Bank, National Association",
+      "state": "Wisconsin",
+      "rank": 49
+    },
+    {
+      "id": "7888",
+      "name": "First National Bank of Pennsylvania",
+      "state": "Pennsylvania",
+      "rank": 50
+    },
+    {
+      "id": "33653",
+      "name": "Bank of China",
+      "state": "New York",
+      "rank": 51
+    },
+    {
+      "id": "34775",
+      "name": "EverBank, National Association",
+      "state": "Florida",
+      "rank": 52
+    },
+    {
+      "id": "33893",
+      "name": "Raymond James Bank",
+      "state": "Florida",
+      "rank": 53
+    },
+    {
+      "id": "16835",
+      "name": "Prosperity Bank",
+      "state": "Texas",
+      "rank": 54
+    },
+    {
+      "id": "57203",
+      "name": "Barclays Bank Delaware",
+      "state": "Delaware",
+      "rank": 55
+    },
+    {
+      "id": "4063",
+      "name": "MidFirst Bank",
+      "state": "Oklahoma",
+      "rank": 56
+    },
+    {
+      "id": "110",
+      "name": "Bank OZK",
+      "state": "Arkansas",
+      "rank": 57
+    },
+    {
+      "id": "623",
+      "name": "Deutsche Bank Trust Company Americas",
+      "state": "New York",
+      "rank": 58
+    },
+    {
+      "id": "34589",
+      "name": "Atlantic Union Bank",
+      "state": "Virginia",
+      "rank": 59
+    },
+    {
+      "id": "12441",
+      "name": "Hancock Whitney Bank",
+      "state": "Mississippi",
+      "rank": 60
+    },
+    {
+      "id": "24998",
+      "name": "Commerce Bank",
+      "state": "Missouri",
+      "rank": 61
+    },
+    {
+      "id": "24045",
+      "name": "Banc of California",
+      "state": "California",
+      "rank": 62
+    },
+    {
+      "id": "58979",
+      "name": "BankUnited, National Association",
+      "state": "Florida",
+      "rank": 63
+    },
+    {
+      "id": "5452",
+      "name": "First National Bank of Omaha",
+      "state": "Nebraska",
+      "rank": 64
+    },
+    {
+      "id": "22858",
+      "name": "United Bank",
+      "state": "Virginia",
+      "rank": 65
+    },
+    {
+      "id": "34383",
+      "name": "Texas Capital Bank",
+      "state": "Texas",
+      "rank": 66
+    },
+    {
+      "id": "7551",
+      "name": "Fulton Bank, National Association",
+      "state": "Pennsylvania",
+      "rank": 67
+    },
+    {
+      "id": "33947",
+      "name": "TD Bank USA, National Association",
+      "state": "Delaware",
+      "rank": 68
+    },
+    {
+      "id": "30788",
+      "name": "Glacier Bank",
+      "state": "Montana",
+      "rank": 69
+    },
+    {
+      "id": "32773",
+      "name": "Eastern Bank",
+      "state": "Massachusetts",
+      "rank": 70
+    },
+    {
+      "id": "7946",
+      "name": "BNY Mellon, National Association",
+      "state": "Pennsylvania",
+      "rank": 71
+    },
+    {
+      "id": "20234",
+      "name": "City National Bank of Florida",
+      "state": "Florida",
+      "rank": 72
+    },
+    {
+      "id": "16889",
+      "name": "United Community Bank",
+      "state": "South Carolina",
+      "rank": 73
+    },
+    {
+      "id": "35546",
+      "name": "Axos Bank",
+      "state": "California",
+      "rank": 74
+    },
+    {
+      "id": "58177",
+      "name": "Sallie Mae Bank",
+      "state": "Utah",
+      "rank": 75
+    },
+    {
+      "id": "20504",
+      "name": "Ameris Bank",
+      "state": "Georgia",
+      "rank": 76
+    },
+    {
+      "id": "8728",
+      "name": "Arvest Bank",
+      "state": "Arkansas",
+      "rank": 77
+    },
+    {
+      "id": "803",
+      "name": "WesBanco Bank, Inc.",
+      "state": "West Virginia",
+      "rank": 78
+    },
+    {
+      "id": "28088",
+      "name": "WaFd Bank",
+      "state": "Washington",
+      "rank": 79
+    },
+    {
+      "id": "12437",
+      "name": "Renasant Bank",
+      "state": "Mississippi",
+      "rank": 80
+    },
+    {
+      "id": "33497",
+      "name": "Charles Schwab Premier Bank, SSB",
+      "state": "Texas",
+      "rank": 81
+    },
+    {
+      "id": "34444",
+      "name": "Customers Bank",
+      "state": "Pennsylvania",
+      "rank": 82
+    },
+    {
+      "id": "1105",
+      "name": "First Interstate Bank",
+      "state": "Montana",
+      "rank": 83
+    },
+    {
+      "id": "12010",
+      "name": "Provident Bank",
+      "state": "New Jersey",
+      "rank": 84
+    },
+    {
+      "id": "58303",
+      "name": "Ameriprise Bank, FSB",
+      "state": "Minnesota",
+      "rank": 85
+    },
+    {
+      "id": "9712",
+      "name": "Rockland Trust Company",
+      "state": "Massachusetts",
+      "rank": 86
+    },
+    {
+      "id": "3890",
+      "name": "Simmons Bank",
+      "state": "Arkansas",
+      "rank": 87
+    },
+    {
+      "id": "18503",
+      "name": "Cathay Bank",
+      "state": "California",
+      "rank": 88
+    },
+    {
+      "id": "11241",
+      "name": "Centennial Bank",
+      "state": "Arkansas",
+      "rank": 89
+    },
+    {
+      "id": "58457",
+      "name": "TriState Capital Bank",
+      "state": "Pennsylvania",
+      "rank": 90
+    },
+    {
+      "id": "18053",
+      "name": "Bank of Hawaii",
+      "state": "Hawaii",
+      "rank": 91
+    },
+    {
+      "id": "17985",
+      "name": "First Hawaiian Bank",
+      "state": "Hawaii",
+      "rank": 92
+    },
+    {
+      "id": "28359",
+      "name": "OceanFirst Bank, National Association",
+      "state": "New Jersey",
+      "rank": 93
+    },
+    {
+      "id": "35095",
+      "name": "TowneBank",
+      "state": "Virginia",
+      "rank": 94
+    },
+    {
+      "id": "17838",
+      "name": "Wilmington Savings Fund Society, FSB",
+      "state": "Delaware",
+      "rank": 95
+    },
+    {
+      "id": "33682",
+      "name": "State Bank of India",
+      "state": "New York",
+      "rank": 96
+    },
+    {
+      "id": "6600",
+      "name": "First Financial Bank",
+      "state": "Ohio",
+      "rank": 97
+    },
+    {
+      "id": "17798",
+      "name": "Beacon Bank and Trust",
+      "state": "Massachusetts",
+      "rank": 98
+    },
+    {
+      "id": "57408",
+      "name": "Optum Bank, Inc.",
+      "state": "Utah",
+      "rank": 99
+    },
+    {
+      "id": "131",
+      "name": "Seacoast National Bank",
+      "state": "Florida",
+      "rank": 100
+    }
+  ]
+}

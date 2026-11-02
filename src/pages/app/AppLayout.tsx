@@ -85,7 +85,7 @@ function AppLayout() {
           <button onClick={signOut}><Icon name="logout" size={17} /><span>Log out</span></button>
         </div>
       </aside>
-      <main className="main" id="main"><div className="route" key={loc.pathname}><Outlet /></div></main>
+      <main className="main" id="main">{business?.isDemo && <div className="demo-banner"><b>SIMULATED DEMO WORKSPACE</b><span>All people, businesses, transactions, balances, and plans shown here are fictional sample data.</span></div>}<div className="route" key={loc.pathname}><Outlet /></div></main>
     </div>
   );
 }

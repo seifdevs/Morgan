@@ -52,7 +52,7 @@ function agent() {
   return { call, get cookie() { return cookie; }, set cookie(v) { cookie = v; } };
 }
 
-const rawReg = (a, email, extra = {}) => a.call('POST', '/auth/register', { name: 'Owner', email, password: 'correct horse 42', businessName: 'Biz ' + email, ...extra });
+const rawReg = (a, email, extra = {}) => a.call('POST', '/auth/register', { name: 'Owner', email, password: 'correct horse 42', businessName: 'Biz ' + email, country: 'US', bankId: '628', currency: 'USD', statementCurrencyConfirmed: true, statementFilename: 'statement.csv', statementFileBase64: Buffer.from('Date,Description,Amount\n2026-10-01,Sample row,1.00').toString('base64'), openingBalanceCents: 0, closingBalanceCents: 100, statementReviewed: true, ...extra });
 async function tokenFromLatest(email, subject = 'Verify your Morgan email') {
   const msg = [...resendRequests].reverse().find((m) => m.to?.includes(email.toLowerCase()) && m.subject === subject);
   assert.ok(msg, `expected a Resend request for ${subject}`);
@@ -62,7 +62,13 @@ async function tokenFromLatest(email, subject = 'Verify your Morgan email') {
 }
 async function reg(a, email, extra = {}) {
   const created = await rawReg(a, email, extra);
-  if (created.status === 201) assert.ok(a.cookie, 'signup creates an authenticated session');
+  if (created.status === 201) {
+    assert.ok(a.cookie, 'signup creates an authenticated session');
+    const step1 = await a.call('PATCH', '/financial-setup', { onboardingStep: 1 }); assert.equal(step1.status, 200);
+    const step2 = await a.call('PATCH', '/financial-setup', { onboardingStep: 2, expectedActivityReviewed: true }); assert.equal(step2.status, 200);
+    const step3 = await a.call('PATCH', '/financial-setup', { monthlyBudgetCents: 0, minimumCashCents: 0, onboardingStep: 3 }); assert.equal(step3.status, 200);
+    const done = await a.call('PATCH', '/financial-setup', { complete: true }); assert.equal(done.status, 200);
+  }
   return created;
 }
 async function issueVerification(user, expiresAt = new Date(Date.now() + 24 * 3600e3)) {
@@ -72,11 +78,23 @@ async function issueVerification(user, expiresAt = new Date(Date.now() + 24 * 36
   return token;
 }
 const statementFile = Buffer.from('Date,Description,Amount\n2026-10-01,Sample row,1.00').toString('base64');
+const bankStatementFile = Buffer.from('Date,Description,Amount,Reference,Balance\n2026-09-12,Studio rent,-250.00,R-12,750.00').toString('base64');
+function statementUpload(rows, openingBalanceCents = 100000) {
+  let balance = openingBalanceCents;
+  const lines = ['Date,Description,Amount,Vendor,Reference,Balance'];
+  for (const row of rows) { balance += row.amountCents; const amount = (row.amountCents / 100).toFixed(2), closing = row.runningBalanceCents ?? balance;
+    const esc = (value) => `"${String(value ?? '').replaceAll('"', '""')}"`;
+    lines.push([row.date, row.description, amount, row.vendor || '', row.reference || '', (closing / 100).toFixed(2)].map(esc).join(','));
+  }
+  return { sourceFileBase64: Buffer.from(lines.join('\n')).toString('base64'), openingBalanceCents, closingBalanceCents: balance };
+}
 
 test('registration validates input and rejects duplicates', async () => {
   const a = agent();
   assert.equal((await reg(a, 'bad-email')).status, 400);
   assert.equal((await a.call('POST', '/auth/register', { name: 'x', email: 'w@x.io', password: 'short', businessName: 'B' })).status, 400);
+  const banks = await a.call('GET', '/bank-directory?country=US&q=JPMorgan');
+  assert.equal(banks.status, 200); assert.equal(banks.body.banks[0].name, 'JPMorgan Chase Bank, National Association'); assert.equal(banks.body.banks.length <= 100, true);
   const ok = await rawReg(a, 'Alice@Example.com');
   assert.equal(ok.status, 201);
   assert.equal(ok.body.user.email, 'alice@example.com');
@@ -86,12 +104,55 @@ test('registration validates input and rejects duplicates', async () => {
   assert.equal(stored.emailVerified, true);
   assert.equal(await db.collection('verificationTokens').countDocuments({ userId: stored._id }), 0);
   assert.ok(!resendRequests.some((m) => m.subject === 'Verify your Morgan email' && m.to.includes('alice@example.com')));
-  assert.equal((await a.call('GET', '/transactions')).status, 200, 'new account can use the workspace without email confirmation');
+  assert.equal((await a.call('GET', '/transactions')).status, 403, 'dashboard API is gated until financial onboarding is complete');
+  const p1 = await a.call('PATCH', '/financial-setup', { onboardingStep: 1 }); assert.equal(p1.status, 200);
+  const p2 = await a.call('PATCH', '/financial-setup', { onboardingStep: 2, expectedActivityReviewed: true }); assert.equal(p2.status, 200);
+  const p3 = await a.call('PATCH', '/financial-setup', { monthlyBudgetCents: 0, minimumCashCents: 0, onboardingStep: 3 }); assert.equal(p3.status, 200);
+  assert.equal((await a.call('PATCH', '/financial-setup', { complete: true })).status, 200);
   assert.equal((await rawReg(agent(), 'alice@example.com')).status, 409);
   const tz = await reg(agent(), 'tz@example.com', { timezone: 'Pacific/Kiritimati' });
   assert.equal(tz.body.business.timezone, 'Pacific/Kiritimati');
   assert.equal((await reg(agent(), 'tz2@example.com', { timezone: 'Not/AZone' })).body.business.timezone, 'UTC');
   assert.match(stored.passwordHash, /^scrypt\$/);
+});
+
+test('registration imports only server-extracted statement data and requires reconciled balances', async () => {
+  const a = agent();
+  const source = Buffer.from('Date,Description,Amount,Balance\n2026-10-01,Opening client receipt,50.00,150.00\n2026-10-02,Software,-20.00,130.00').toString('base64');
+  const preview = await a.call('POST', '/auth/statement-preview', { filename: 'real.csv', sourceFileBase64: source, currency: 'USD' });
+  assert.equal(preview.status, 200); assert.equal(preview.body.rows.length, 2); assert.equal(preview.body.rows[1].amountCents, -2000);
+  const mismatch = await rawReg(a, 'bad-balance@example.com', { statementFileBase64: source, statementFilename: 'real.csv', openingBalanceCents: 10000, closingBalanceCents: 14000 });
+  assert.equal(mismatch.status, 400); assert.match(mismatch.body.error, /do not reconcile/);
+  const created = await rawReg(a, 'statement-owner@example.com', { statementFileBase64: source, statementFilename: 'real.csv', openingBalanceCents: 10000, closingBalanceCents: 13000 });
+  assert.equal(created.status, 201);
+  const bid = new ObjectId(created.body.business.id);
+  const txns = await db.collection('transactions').find({ businessId: bid }).sort({ date: 1 }).toArray();
+  assert.equal(txns.length, 2); assert.equal(txns[0].description, 'Opening client receipt'); assert.equal(txns[1].amountCents, -2000);
+  assert.equal((await a.call('GET', '/overview')).status, 403);
+  assert.equal((await db.collection('statementImports').countDocuments({ businessId: bid, sourceFileSha256: { $exists: true } })), 1);
+
+  const duplicateFile = Buffer.from('Date,Description,Amount,Balance,Reference\n2026-10-01,Same transaction,50.00,150.00,SAME-1\n2026-10-01,Same transaction,50.00,150.00,SAME-1').toString('base64');
+  const duplicatePreview = await a.call('POST', '/auth/statement-preview', { filename: 'duplicate.csv', sourceFileBase64: duplicateFile, currency: 'USD' });
+  assert.equal(duplicatePreview.body.summary.duplicates, 1); assert.equal(duplicatePreview.body.rows[1].duplicate, true);
+  const duplicateBase = { statementFileBase64: duplicateFile, statementFilename: 'duplicate.csv', openingBalanceCents: 10000, closingBalanceCents: 15000 };
+  assert.equal((await rawReg(a, 'duplicate-owner@example.com', duplicateBase)).status, 400, 'repeated rows need explicit review');
+  const deduplicated = await rawReg(a, 'duplicate-owner@example.com', { ...duplicateBase, duplicatesReviewed: true }); assert.equal(deduplicated.status, 201);
+  assert.equal(await db.collection('transactions').countDocuments({ businessId: new ObjectId(deduplicated.body.business.id) }), 1);
+});
+
+test('demo account is isolated, visibly marked, populated and bypasses required onboarding', async () => {
+  const a = agent();
+  const created = await a.call('POST', '/auth/demo', {});
+  assert.equal(created.status, 201); assert.equal(created.body.business.isDemo, true); assert.equal(created.body.business.financialSetupComplete, true);
+  const biz = new ObjectId(created.body.business.id);
+  assert.ok(await db.collection('transactions').countDocuments({ businessId: biz, simulated: true }) >= 5);
+  assert.equal(await db.collection('customers').countDocuments({ businessId: biz, simulated: true }), 1);
+  assert.equal(await db.collection('invoices').countDocuments({ businessId: biz, simulated: true }), 1);
+  assert.equal(await db.collection('bills').countDocuments({ businessId: biz, simulated: true }), 1);
+  assert.equal(await db.collection('bankAccounts').countDocuments({ businessId: biz, simulated: true }), 1);
+  assert.equal((await a.call('GET', '/overview')).status, 200);
+  const real = agent(); await reg(real, 'isolated@example.com');
+  assert.equal((await real.call('GET', '/transactions')).body.items.some((row) => row.simulated), false);
 });
 
 test('signup succeeds without sending email when the provider is unavailable', async () => {
@@ -197,7 +258,7 @@ test('query operators in filters are not passed to MongoDB', async () => {
   const body = await r.json();
   // Object-valued params are ignored, never turned into operators.
   assert.equal(r.status, 200);
-  assert.equal(body.total, 1);
+  assert.equal(body.total, 2);
   assert.equal((await fetch(`${base}/transactions?from[$gt]=`, { headers: { cookie: a.cookie } })).status, 400);
 });
 
@@ -233,7 +294,7 @@ test('production headers: CSP, HSTS, secure cookie, health check', async () => {
     assert.deepEqual(await h.json(), { ok: true, db: 'up' });
     assert.match(h.headers.get('content-security-policy'), /default-src 'self'.*frame-ancestors 'none'/);
     assert.match(h.headers.get('strict-transport-security'), /max-age/);
-    const r = await fetch(url + '/auth/register', { method: 'POST', headers: { 'content-type': 'application/json', 'x-morgan-csrf': '1' }, body: JSON.stringify({ name: 'S', email: 'secure@example.com', password: 'correct horse 42', businessName: 'S' }) });
+    const r = await fetch(url + '/auth/register', { method: 'POST', headers: { 'content-type': 'application/json', 'x-morgan-csrf': '1' }, body: JSON.stringify({ name: 'S', email: 'secure@example.com', password: 'correct horse 42', businessName: 'S', country: 'US', bankId: '628', currency: 'USD', statementCurrencyConfirmed: true, statementFilename: 'statement.csv', statementFileBase64: statementFile, openingBalanceCents: 0, closingBalanceCents: 100, statementReviewed: true }) });
     assert.equal(r.status, 201);
     assert.match(r.headers.get('set-cookie'), /; Secure/, 'registration issues the authenticated session over a secure cookie');
     const login = await fetch(url + '/auth/login', { method: 'POST', headers: { 'content-type': 'application/json', 'x-morgan-csrf': '1' }, body: JSON.stringify({ email: 'secure@example.com', password: 'correct horse 42' }) });
@@ -264,7 +325,7 @@ test('full invoice workflow with exact money math, PDF and payments', async () =
 
   const sent = await a.call('GET', `/invoices/${id}`);
   assert.equal(sent.body.displayStatus, 'overdue');
-  assert.equal((await a.call('GET', '/overview')).body.cash, null, 'without a dated balance point, an invoice cannot establish available cash');
+  assert.equal((await a.call('GET', '/overview')).body.cash, 100, 'the imported statement provides the dated starting cash position');
   const pdf = await a.call('GET', `/invoices/${id}/pdf`);
   assert.equal(pdf.headers.get('content-type'), 'application/pdf');
   assert.equal(pdf.body.subarray(0, 5).toString(), '%PDF-');
@@ -279,21 +340,39 @@ test('full invoice workflow with exact money math, PDF and payments', async () =
   const p1 = await a.call('POST', `/invoices/${id}/payments`, { amount: '10.00', date: '2026-10-20' });
   assert.equal(p1.body.balanceDue, 1165);
   assert.equal(p1.body.displayStatus, 'overdue');
-  assert.equal((await a.call('GET', '/overview')).body.cash, null, 'payment movement does not invent the starting cash balance');
+  assert.equal((await a.call('GET', '/overview')).body.cash, 1100, 'invoice payment activity rolls forward from the statement closing balance');
   const p2 = await a.call('POST', `/invoices/${id}/payments`, { amountCents: 1165, date: '2026-10-21' });
   assert.equal(p2.body.status, 'paid');
   assert.equal(p2.body.balanceDue, 0);
-  assert.equal((await a.call('GET', '/overview')).body.cash, null);
+  assert.equal((await a.call('GET', '/overview')).body.cash, 2265);
 
   const txns = await a.call('GET', '/transactions');
-  assert.equal(txns.body.total, 2);
+  assert.equal(txns.body.total, 3);
   assert.equal(txns.body.income, 2165);
   // Linked payment transactions cannot be edited directly.
   assert.equal((await a.call('DELETE', `/transactions/${txns.body.items[0].id}`)).status, 400);
   // Removing a payment reopens the invoice and removes its transaction.
   const reopened = await a.call('DELETE', `/invoices/${id}/payments/${p2.body.payments[1].id}`);
   assert.equal(reopened.body.status, 'sent');
-  assert.equal((await a.call('GET', '/transactions')).body.total, 1);
+  assert.equal((await a.call('GET', '/transactions')).body.total, 2, 'the onboarding statement and the remaining payment are still recorded');
+});
+
+test('opening cash edited in Settings is the shared Overview, cash flow and forecast starting balance', async () => {
+  const a = agent(); await reg(a, 'cash-sync@example.com');
+  const today = (await a.call('GET', '/financial-setup')).body.today;
+  const prior = new Date(`${today}T00:00:00Z`); prior.setUTCDate(prior.getUTCDate() - 1);
+  const openingDate = prior.toISOString().slice(0, 10);
+  const saved = await a.call('PATCH', '/business', { name: 'Cash Sync', currency: 'USD', invoicePrefix: 'CS-', openingBalanceCents: 2000000, openingBalanceDate: openingDate, defaultTaxRateBps: 0, paymentTermsDays: 14 });
+  assert.equal(saved.status, 200);
+  assert.equal((await a.call('GET', '/overview')).body.cash, 2000000);
+  assert.equal((await a.call('GET', '/cashflow')).body.opening, 2000000);
+  await a.call('POST', '/transactions', { date: today, description: 'After opening checkpoint', amount: '500.00', type: 'expense' });
+  assert.equal((await a.call('GET', '/overview')).body.cash, 1950000);
+  assert.equal((await a.call('GET', '/cashflow')).body.opening, 1950000);
+  const future = new Date(`${today}T00:00:00Z`); future.setUTCDate(future.getUTCDate() + 3);
+  await a.call('POST', '/planning-items', { name: 'Planned hosting renewal', type: 'expense', category: 'Software', amountCents: 10000, cadence: 'once', nextDate: future.toISOString().slice(0, 10), confidence: 'planned' });
+  assert.equal((await a.call('GET', '/overview')).body.financialPlan.forecast.days30, 1940000);
+  assert.ok((await a.call('GET', '/cashflow')).body.weeks.flatMap((week) => week.items).some((item) => item.label === 'Planned hosting renewal'));
 });
 
 test('business data is strictly isolated between accounts', async () => {
@@ -305,7 +384,7 @@ test('business data is strictly isolated between accounts', async () => {
   const c = await a.call('POST', '/customers', { name: 'Private Co' });
   const inv = await a.call('POST', '/invoices', { customerId: c.body.id, issueDate: '2026-10-01', dueDate: '2026-11-01', items: [{ description: 'x', quantity: 1, unitCents: 500 }] });
 
-  assert.equal((await b.call('GET', '/transactions')).body.total, 0);
+  assert.equal((await b.call('GET', '/transactions')).body.total, 1, 'the other account contains only its own onboarding statement');
   assert.equal((await b.call('GET', '/invoices')).body.length, 0);
   assert.equal((await b.call('GET', `/invoices/${inv.body.id}`)).status, 404);
   assert.equal((await b.call('GET', `/invoices/${inv.body.id}/pdf`)).status, 404);
@@ -317,7 +396,7 @@ test('business data is strictly isolated between accounts', async () => {
   // Client-supplied businessId is ignored.
   const sneaky = await b.call('POST', '/transactions', { businessId: 'x', date: '2026-10-02', description: 'mine', amount: '5', type: 'income' });
   assert.equal(sneaky.status, 201);
-  assert.equal((await a.call('GET', '/transactions')).body.total, 1);
+  assert.equal((await a.call('GET', '/transactions')).body.total, 2);
 });
 
 test('bank accounts isolate data and statement imports are reviewed, persistent and deduplicated', async () => {
@@ -326,33 +405,35 @@ test('bank accounts isolate data and statement imports are reviewed, persistent 
   const created = await a.call('POST', '/bank-accounts', { institution: 'North Bank', name: 'Operating', type: 'checking', currency: 'USD', accountNumber: '001234', openingBalanceCents: 100000, openingBalanceDate: '2026-09-01' });
   assert.equal(created.status, 201); assert.equal(created.body.maskedIdentifier, '•••• 1234'); assert.equal('accountNumber' in created.body, false);
   const rows = [{ date: '2026-09-12', description: 'Studio rent', vendor: 'Studio', amountCents: -25000, currency: 'USD', reference: 'R-12', runningBalanceCents: 75000 }];
-  const preview = await a.call('POST', '/bank-statements/preview', { accountId: created.body.id, statementPeriodStart: '2026-09-01', statementPeriodEnd: '2026-09-30', openingBalanceCents: 100000, closingBalanceCents: 75000, rows });
+  const verifiedUpload = statementUpload(rows);
+  const preview = await a.call('POST', '/bank-statements/preview', { accountId: created.body.id, filename: 'october.csv', ...verifiedUpload, statementPeriodStart: '2026-09-01', statementPeriodEnd: '2026-09-30' });
   assert.equal(preview.status, 200); assert.equal(preview.body.summary.discrepancyCents, 0); assert.equal(preview.body.rows[0].duplicate, false);
-  const invalidFile = await a.call('POST', '/bank-statements/import', { accountId: created.body.id, filename: 'statement.pdf', sourceFileBase64: statementFile, rows });
+  const invalidFile = await a.call('POST', '/bank-statements/import', { accountId: created.body.id, filename: 'statement.pdf', sourceFileBase64: statementFile, openingBalanceCents: 100000, closingBalanceCents: 75000, rows });
   assert.equal(invalidFile.status, 400, 'file contents must match their extension before anything is persisted');
   assert.equal(await db.collection('statementImports').countDocuments({ filename: 'statement.pdf' }), 0);
-  const imported = await a.call('POST', '/bank-statements/import', { accountId: created.body.id, filename: 'october.csv', sourceFileBase64: statementFile, statementPeriodStart: '2026-09-01', statementPeriodEnd: '2026-09-30', openingBalanceCents: 100000, closingBalanceCents: 75000, rows });
+  const imported = await a.call('POST', '/bank-statements/import', { accountId: created.body.id, filename: 'october.csv', ...verifiedUpload, statementPeriodStart: '2026-09-01', statementPeriodEnd: '2026-09-30' });
   assert.equal(imported.status, 201); assert.equal(imported.body.imported, 1);
   assert.equal(imported.body.emailNotification.status, 'accepted', 'statement import confirmation was accepted by the provider');
-  const repeat = await a.call('POST', '/bank-statements/import', { accountId: created.body.id, filename: 'different-name.csv', sourceFileBase64: statementFile, statementPeriodStart: '2026-09-01', statementPeriodEnd: '2026-09-30', openingBalanceCents: 100000, closingBalanceCents: 75000, rows });
+  const repeat = await a.call('POST', '/bank-statements/import', { accountId: created.body.id, filename: 'different-name.csv', ...verifiedUpload, statementPeriodStart: '2026-09-01', statementPeriodEnd: '2026-09-30' });
   assert.equal(repeat.status, 201); assert.equal(repeat.body.imported, 0); assert.equal(repeat.body.duplicates, 1);
-  const txns = await a.call('GET', '/transactions'); assert.equal(txns.body.total, 1); assert.equal(txns.body.items[0].source, 'bank-statement');
-  assert.equal(txns.body.income, 0); assert.equal(txns.body.expenses, 0); assert.equal(txns.body.unclassified, 1);
-  assert.equal((await a.call('PATCH', `/bank-transactions/${txns.body.items[0].id}/classification`, { financialClass: 'expense', category: 'Rent' })).status, 200);
+  const txns = await a.call('GET', '/transactions'); assert.equal(txns.body.total, 2); assert.ok(txns.body.items.some((item) => item.source === 'bank-statement'));
+  assert.equal(txns.body.income, 0); assert.equal(txns.body.expenses, 0); assert.equal(txns.body.unclassified, 2);
+  const importedTxn = txns.body.items.find((item) => item.description === 'Studio rent');
+  assert.equal((await a.call('PATCH', `/bank-transactions/${importedTxn.id}/classification`, { financialClass: 'expense', category: 'Rent' })).status, 200);
   const classified = await a.call('GET', '/transactions');
-  assert.equal(classified.body.expenses, 25000); assert.equal(classified.body.unclassified, 0);
+  assert.equal(classified.body.expenses, 25000); assert.equal(classified.body.unclassified, 1);
   assert.equal((await a.call('GET', '/reports/pnl?year=2026')).body.expenses[0].total, 25000);
   const accounts = await a.call('GET', '/bank-accounts'); assert.equal(accounts.body[0].calculatedBalanceCents, 75000); assert.equal(accounts.body[0].latestImport.duplicateCount, 1);
   const storedStatement = await db.collection('statementImports').findOne({ businessId: (await db.collection('users').findOne({ email: 'bank-a@example.com' })).businessId, filename: 'october.csv' });
-  assert.deepEqual(Buffer.from(storedStatement.sourceFile.buffer), Buffer.from(statementFile, 'base64'));
+  assert.deepEqual(Buffer.from(storedStatement.sourceFile.buffer), Buffer.from(verifiedUpload.sourceFileBase64, 'base64'));
   assert.equal(storedStatement.sourceFileSha256.length, 64);
   const imports = await a.call('GET', `/bank-accounts/${created.body.id}/imports`);
   assert.equal(imports.body.find((x) => x.filename === 'october.csv').sourceFileStored, true);
   assert.equal('sourceFile' in imports.body.find((x) => x.filename === 'october.csv'), false);
   const coverage = await a.call('GET', '/reports/coverage?year=2026');
   assert.equal(coverage.body.months.find((m) => m.month === '2026-09').accounts[0].status, 'complete');
-  assert.equal((await a.call('GET', '/overview')).body.cash, 75000, 'statement closing balance anchors consolidated cash');
-  assert.equal((await b.call('GET', '/reports/coverage?year=2026')).body.accounts.length, 0);
+  assert.equal((await a.call('GET', '/overview')).body.cash, 75100, 'all complete statement-backed cash accounts are consolidated');
+  assert.equal((await b.call('GET', '/reports/coverage?year=2026')).body.accounts.length, 1, 'the other workspace contains only its own registration account');
   const withoutBaseline = await a.call('POST', '/bank-accounts', { institution: 'North Bank', name: 'No opening point', type: 'checking', currency: 'USD' });
   assert.equal((await a.call('GET', '/bank-accounts')).body.find((item) => item.id === withoutBaseline.body.id).calculatedBalanceCents, null, 'transaction movement alone is not presented as an account balance');
   const partialCash = await a.call('GET', '/overview');
@@ -360,12 +441,13 @@ test('bank accounts isolate data and statement imports are reviewed, persistent 
   assert.deepEqual(partialCash.body.cashDetails.missingAccounts, ['No opening point']);
   assert.equal((await b.call('PATCH', `/bank-transactions/${txns.body.items[0].id}/classification`, { financialClass: 'expense', category: 'Rent' })).status, 404);
   const refund = { date: '2026-10-14', description: 'Studio rent refund', vendor: 'Studio', amountCents: 5000, currency: 'USD', reference: 'R-REFUND' };
-  await a.call('POST', '/bank-statements/import', { accountId: created.body.id, filename: 'refund.csv', sourceFileBase64: statementFile, rows: [refund] });
+  const refundUpload = statementUpload([refund], 75000);
+  await a.call('POST', '/bank-statements/import', { accountId: created.body.id, filename: 'refund.csv', ...refundUpload });
   const refundTxn = (await a.call('GET', '/transactions')).body.items.find((t) => t.description === refund.description);
   assert.equal((await a.call('PATCH', `/bank-transactions/${refundTxn.id}/classification`, { financialClass: 'refund', category: 'Rent' })).status, 200);
   assert.equal((await a.call('GET', '/transactions')).body.expenses, 20000);
   assert.equal((await a.call('GET', `/bank-accounts/${created.body.id}/imports`)).body.length, 3);
-  assert.equal((await b.call('GET', '/bank-accounts')).body.length, 0);
+  assert.equal((await b.call('GET', '/bank-accounts')).body.length, 1, 'the other workspace contains only its own statement-backed account');
   assert.equal((await b.call('GET', `/bank-accounts/${created.body.id}/imports`)).status, 404);
   const archived = await a.call('PATCH', `/bank-accounts/${created.body.id}`, { status: 'archived' }); assert.equal(archived.body.status, 'archived');
   assert.equal((await a.call('POST', '/bank-statements/preview', { accountId: created.body.id, rows })).status, 404);
@@ -379,7 +461,8 @@ test('statement reconciliation handles partial invoice payments, bills, existing
   const invoice = await a.call('POST', '/invoices', { customerId: customer.body.id, issueDate: '2026-10-01', dueDate: '2026-11-15', items: [{ description: 'Services', quantity: 1, unitCents: 10000 }] });
   await a.call('POST', `/invoices/${invoice.body.id}/mark-sent`);
   const account = await a.call('POST', '/bank-accounts', { institution: 'North Bank', name: 'Operating', type: 'checking', currency: 'USD' });
-  const importOne = (rows, filename, accountId = account.body.id) => a.call('POST', '/bank-statements/import', { accountId, filename, sourceFileBase64: statementFile, rows });
+  const accountBalances = new Map([[account.body.id, 100000]]);
+  const importOne = (rows, filename, accountId = account.body.id) => { const upload = statementUpload(rows, accountBalances.get(accountId) ?? 100000); accountBalances.set(accountId, upload.closingBalanceCents); return a.call('POST', '/bank-statements/import', { accountId, filename, ...upload }); };
   const first = { date: '2026-10-22', description: 'Cedar Client payment', vendor: 'Cedar Client', amountCents: 4000, currency: 'USD', reference: 'PAY-1' };
   assert.equal((await importOne([first], 'first.csv')).status, 201);
   const available = await a.call('GET', `/bank-accounts/${account.body.id}/transactions`);
@@ -441,17 +524,17 @@ test('bills, overview and analytics use persisted data', async () => {
   assert.equal(badImport.status, 400);
   const bill = await a.call('POST', '/bills', { vendor: 'Harbor', amount: '1850', dueDate: today, category: 'Rent' });
   const ov1 = await a.call('GET', '/overview');
-  assert.equal(ov1.body.cash, 1000000 + 500000 - 19998);
+  assert.equal(ov1.body.cash, 1000000 + 500000 - 19998 + 100);
   assert.equal(ov1.body.payables.outstanding, 185000);
   await a.call('POST', `/bills/${bill.body.id}/pay`, { date: today, amountCents: 50000 });
   const partialBill = (await a.call('GET', '/bills')).body.find((item) => item.id === bill.body.id);
   assert.equal(partialBill.status, 'partial'); assert.equal(partialBill.amountPaidCents, 50000); assert.equal(partialBill.balanceDueCents, 135000);
   const partialOverview = await a.call('GET', '/overview');
   assert.equal(partialOverview.body.payables.outstanding, 135000);
-  assert.equal(partialOverview.body.cash, 1000000 + 500000 - 19998 - 50000);
+  assert.equal(partialOverview.body.cash, 1000000 + 500000 - 19998 - 50000 + 100);
   await a.call('POST', `/bills/${bill.body.id}/pay`, { date: today });
   const ov2 = await a.call('GET', '/overview');
-  assert.equal(ov2.body.cash, 1000000 + 500000 - 19998 - 185000);
+  assert.equal(ov2.body.cash, 1000000 + 500000 - 19998 - 185000 + 100);
   assert.equal(ov2.body.period.income, 500000);
   assert.equal(ov2.body.period.expenses, 19998 + 185000);
   const ins = await a.call('GET', '/insights');
@@ -536,12 +619,12 @@ test('expired sessions are rejected server-side', async () => {
 
 test('financial setup, expected schedules, forecast edits and business isolation persist', async () => {
   const a = agent(), other = agent();
-  const created = await reg(a, 'planner@example.com');
+  const created = await rawReg(a, 'planner@example.com');
   await reg(other, 'different-planner@example.com');
   assert.equal(created.body.business.financialSetupComplete, false);
   const setup = await a.call('GET', '/financial-setup');
   assert.equal(setup.body.business.financialSetupComplete, false);
-  const today = setup.body.business.timezone ? (await a.call('GET', '/cashflow')).body.today : new Date().toISOString().slice(0, 10);
+  const today = setup.body.today;
   const plus = (days) => { const d = new Date(`${today}T00:00:00Z`); d.setUTCDate(d.getUTCDate() + days); return d.toISOString().slice(0, 10); };
   const saved = await a.call('PATCH', '/financial-setup', { cashAccounts: [
     { name: 'Operating', type: 'checking', currency: 'USD', balanceCents: 750000, balanceDate: today, notes: '' },
@@ -555,9 +638,15 @@ test('financial setup, expected schedules, forecast edits and business isolation
     { name: 'B', type: 'checking', currency: 'USD', balanceCents: 10, balanceDate: plus(1) },
   ] })).status, 400, 'account balances must share an as-of date');
   assert.equal(saved.body.business.monthlyBudgetCents, 100000);
+  assert.equal((await a.call('GET', '/overview')).status, 403, 'financial API remains unavailable during onboarding');
+  assert.equal((await a.call('PATCH', '/financial-setup', { onboardingStep: 1 })).status, 200);
+  assert.equal((await a.call('PATCH', '/financial-setup', { onboardingStep: 2 })).status, 400, 'expected activity requires an explicit review confirmation');
+  assert.equal((await a.call('PATCH', '/financial-setup', { onboardingStep: 2, expectedActivityReviewed: true })).status, 200);
+  assert.equal((await a.call('PATCH', '/financial-setup', { onboardingStep: 3 })).status, 200);
   const monthly = await a.call('POST', '/planning-items', { name: 'Software subscription', type: 'expense', category: 'Software', amountCents: 20000, cadence: 'monthly', nextDate: plus(1), confidence: 'planned' });
   const oneTime = await a.call('POST', '/planning-items', { name: 'Equipment purchase', type: 'expense', category: 'Equipment', amountCents: 50000, cadence: 'once', nextDate: plus(8), confidence: 'planned' });
   assert.equal(monthly.status, 201); assert.equal(oneTime.status, 201);
+  const initiallyCompleted = await a.call('PATCH', '/financial-setup', { complete: true }); assert.equal(initiallyCompleted.status, 200);
   const forecast = await a.call('GET', '/cashflow');
   const scheduled = forecast.body.weeks.flatMap((w) => w.items).filter((i) => i.type === 'planned');
   const subRows = scheduled.filter((i) => i.id === monthly.body.id);
@@ -566,7 +655,7 @@ test('financial setup, expected schedules, forecast edits and business isolation
   assert.equal(spendPlan.body.plannedRecurring.find((i) => i.id === monthly.body.id).monthlyEstimateCents, 20000, 'planned recurring costs appear separately in Spending');
   assert.equal(scheduled.find((i) => i.id === oneTime.body.id).amountCents, -50000);
   assert.equal(scheduled.find((i) => i.id === oneTime.body.id).date, plus(8));
-  assert.equal(await db.collection('transactions').countDocuments({ businessId: new (await import('mongodb')).ObjectId(created.body.business.id) }), 0, 'expected items are not recorded as actual transactions');
+  assert.equal(await db.collection('transactions').countDocuments({ businessId: new (await import('mongodb')).ObjectId(created.body.business.id) }), 1, 'only the imported onboarding statement is present; expected items remain planned');
   const edited = await a.call('PATCH', `/planning-items/${monthly.body.id}`, { name: 'Software subscription', type: 'expense', category: 'Software', amountCents: 25000, cadence: 'monthly', nextDate: plus(1), confidence: 'planned' });
   assert.equal(edited.body.amountCents, 25000);
   const afterEdit = await a.call('GET', '/cashflow');
@@ -581,10 +670,10 @@ test('financial setup, expected schedules, forecast edits and business isolation
   assert.equal((await a.call('DELETE', `/planning-items/${oneTime.body.id}`)).status, 200);
   assert.equal((await a.call('GET', '/planning-items')).body.length, 1);
   assert.ok(!(await a.call('GET', '/cashflow')).body.weeks.flatMap((w) => w.items).some((i) => i.id === oneTime.body.id), 'deleting a plan removes its future forecast occurrence');
-  assert.equal(await db.collection('transactions').countDocuments({ businessId: new (await import('mongodb')).ObjectId(created.body.business.id) }), 0, 'removing a plan leaves actual transaction history untouched');
+  assert.equal(await db.collection('transactions').countDocuments({ businessId: new (await import('mongodb')).ObjectId(created.body.business.id) }), 1, 'removing a plan leaves the imported onboarding statement untouched');
   const done = await a.call('PATCH', '/financial-setup', { complete: true });
   assert.equal(done.body.business.financialSetupComplete, true);
-  assert.equal(done.body.emailNotification.status, 'accepted');
+  assert.equal(initiallyCompleted.body.emailNotification.status, 'accepted');
   assert.ok(resendRequests.some((message) => message.subject === 'Your Morgan workspace is ready' && message.to.includes('planner@example.com')));
   const emailsBeforeRepeat = resendRequests.length;
   await a.call('PATCH', '/financial-setup', { complete: true });

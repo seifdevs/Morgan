@@ -419,3 +419,15 @@ a.list-row:hover { background: #ffffff05; }
 .admin-metric strong { color: var(--text, #f4f6f8); font-size: 30px; font-variant-numeric: tabular-nums; }
 @media (max-width: 760px) { .admin-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 @media (max-width: 420px) { .admin-metrics { grid-template-columns: 1fr; } }
+.demo-banner { display:flex; gap:12px; align-items:center; padding:11px 22px; background:rgba(214,168,79,.1); border-bottom:1px solid rgba(214,168,79,.24); color:var(--text); font-size:12px; }
+.demo-banner b { color:var(--gold); letter-spacing:.09em; font-size:10px; white-space:nowrap; }
+.demo-banner span { color:var(--muted); }
+.check-row { display:flex; gap:11px; align-items:flex-start; max-width:760px; color:var(--muted); font-size:13px; line-height:1.55; cursor:pointer; }
+.check-row input { margin-top:3px; accent-color:var(--gold); }
+.statement-signup-review { padding:20px; display:grid; gap:14px; margin:10px 0; }
+.statement-signup-review h2,.statement-signup-review p { margin:0; }
+.signup-statement-table { max-height:280px; overflow:auto; }
+.signup-statement-table .table { min-width:600px; }
+.demo-account-action { display:grid; gap:8px; border-top:1px solid var(--line); padding-top:18px; margin-top:6px; }
+.demo-account-action small { color:var(--muted); font-size:12px; line-height:1.5; }
+@media(max-width:700px) { .demo-banner { align-items:flex-start; flex-direction:column; gap:4px; padding:11px 16px; } }

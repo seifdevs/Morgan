@@ -15,28 +15,31 @@ export default function FinancialOnboarding() {
   const { setSession } = useAuth();
   const money = useMoney();
   const nav = useNavigate();
-  const [step, setStep] = useState(0);
+  const [stepOverride, setStep] = useState<number | null>(null);
+  const step = stepOverride ?? data?.business.onboardingStep ?? 0;
   const [accounts, setAccounts] = useState<{ name: string; type: string; currency: string; balance: string; balanceDate: string; notes: string }[] | null>(null);
   const [industry, setIndustry] = useState<string | null>(null), [budget, setBudget] = useState<string | null>(null), [reserve, setReserve] = useState<string | null>(null);
   const [item, setItem] = useState(blank), [busy, setBusy] = useState(false), [formError, setFormError] = useState('');
+  const [expectedReviewed, setExpectedReviewed] = useState(false);
   const steps = ['Starting position', 'Expected activity', 'Monthly plan', 'Review'];
   const accountRows = accounts ?? (data ? data.business.cashAccounts?.length ? data.business.cashAccounts.map((a) => ({ name: a.name, type: a.type, currency: a.currency, balance: centsToInput(a.balanceCents), balanceDate: a.balanceDate, notes: a.notes || '' })) : data.business.openingBalanceDate ? [{ name: 'Business cash', type: 'checking', currency: data.business.currency, balance: centsToInput(data.business.openingBalanceCents), balanceDate: data.business.openingBalanceDate, notes: '' }] : [{ name: '', type: 'checking', currency: data.business.currency, balance: '', balanceDate: today, notes: '' }] : []);
 
-  async function savePosition() {
-    const monthlyBudgetCents = budget === null ? data!.business.monthlyBudgetCents : budget ? toCents(budget) : null;
-    const minimumCashCents = reserve === null ? data!.business.minimumCashCents : reserve ? toCents(reserve) : null;
+  async function savePosition(onboardingStep?: number) {
+    const monthlyBudgetCents = budget === null ? data!.business.monthlyBudgetCents : budget !== '' ? toCents(budget) : null;
+    const minimumCashCents = reserve === null ? data!.business.minimumCashCents : reserve !== '' ? toCents(reserve) : null;
     const cashAccounts = accountRows.filter((a) => a.name.trim() || a.balance.trim()).map((a) => {
       const balanceCents = toCents(a.balance);
       if (!a.name.trim() || balanceCents === null) throw new Error('Each cash account needs a name and a valid balance. Remove any unused rows.');
       return { ...a, balanceCents };
     });
-    if (budget && toCents(budget) === null) throw new Error('Enter a valid monthly budget.');
-    if (reserve && toCents(reserve) === null) throw new Error('Enter a valid minimum reserve.');
+    if (budget !== null && budget !== '' && toCents(budget) === null) throw new Error('Enter a valid monthly budget.');
+    if (reserve !== null && reserve !== '' && toCents(reserve) === null) throw new Error('Enter a valid minimum reserve.');
     const result = await api<{ business: Business }>('/financial-setup', { method: 'PATCH', body: {
-      cashAccounts, monthlyBudgetCents, minimumCashCents, industry: industry ?? data!.business.industry,
+      ...(step === 0 && { cashAccounts }), ...(step === 2 && { monthlyBudgetCents, minimumCashCents }), industry: industry ?? data!.business.industry, ...(onboardingStep !== undefined && { onboardingStep }), ...(step === 1 && onboardingStep === 2 && { expectedActivityReviewed: expectedReviewed }),
     } });
     setSession({ business: result.business });
     reload();
+    setStep(result.business.onboardingStep);
   }
   async function addItem(e: React.FormEvent) {
     e.preventDefault();
@@ -79,7 +82,7 @@ export default function FinancialOnboarding() {
           </div>)}
           <div className="row-actions"><button className="btn outline" type="button" onClick={() => setAccounts([...accountRows, { name: '', type: 'checking', currency: data.business.currency, balance: '', balanceDate: accountRows[0]?.balanceDate || data.today, notes: '' }])}><Icon name="plus" size={15} />Add another account</button></div>
           <div className="field"><label htmlFor="setup-industry">Business type <span className="muted">· optional</span></label><input className="input" id="setup-industry" placeholder="e.g. Design studio" value={industry ?? data.business.industry} onChange={(e) => setIndustry(e.target.value)} /></div>
-          {!data.business.openingBalanceDate && !accountRows.some((a) => a.name && a.balance) && <p className="hint">You can skip cash for now. Forecasts will be less complete until a starting balance is added.</p>}
+          {!data.business.openingBalanceDate && !accountRows.some((a) => a.name && a.balance) && <p className="hint">Your statement was imported at registration. Add a current balance if you want to set a newer starting point.</p>}
         </div>}
         {step === 1 && <div className="panel-body setup-form">
           <p className="muted">Add expected inflows and recurring expenses you want included in cash planning. These remain planned items; they are never recorded as paid or received.</p>
@@ -97,13 +100,13 @@ export default function FinancialOnboarding() {
             <button className="btn outline" type="submit" disabled={busy}><Icon name="plus" size={16} />{busy ? 'Saving…' : 'Add expected item'}</button>
           </form>
           <div className="setup-item-list"><h3>Saved expected items</h3>{data.items.length ? data.items.map((i) => <div className="setup-item" key={i.id}><span><b>{i.name}</b><small>{i.category} · {i.cadence} · next {i.nextDate}</small></span><b className={`num ${i.type === 'income' ? 'pos' : ''}`}>{i.type === 'income' ? '+' : '−'}{money(i.amountCents)}</b></div>) : <p className="muted">Nothing added yet. You can add items later in Cash flow.</p>}</div>
-          <button className="btn ghost" type="button" onClick={() => setStep(2)}>Skip expected items</button>
+          <label className="check-row"><input type="checkbox" checked={expectedReviewed} onChange={(e) => setExpectedReviewed(e.target.checked)} /><span>I reviewed expected income and recurring expenses. The items above are complete, including if I have none to add.</span></label>
         </div>}
         {step === 2 && <div className="panel-body setup-form">
           <p className="muted">Set your own monthly spending guardrails. These do not change transactions or forecast assumptions.</p>
           <div className="form-grid two">
-            <div className="field"><label htmlFor="setup-budget">Overall monthly spending budget · optional</label><input className="input num" id="setup-budget" inputMode="decimal" placeholder="Leave blank if not set" value={budget ?? (data.business.monthlyBudgetCents == null ? '' : centsToInput(data.business.monthlyBudgetCents))} onChange={(e) => setBudget(e.target.value)} /></div>
-            <div className="field"><label htmlFor="setup-reserve">Minimum cash reserve · optional</label><input className="input num" id="setup-reserve" inputMode="decimal" placeholder="Leave blank if not set" value={reserve ?? (data.business.minimumCashCents == null ? '' : centsToInput(data.business.minimumCashCents))} onChange={(e) => setReserve(e.target.value)} /></div>
+            <div className="field"><label htmlFor="setup-budget">Overall monthly spending budget</label><input className="input num" id="setup-budget" inputMode="decimal" placeholder="Enter 0 if not set" value={budget ?? (data.business.monthlyBudgetCents == null ? '' : centsToInput(data.business.monthlyBudgetCents))} onChange={(e) => setBudget(e.target.value)} required /></div>
+            <div className="field"><label htmlFor="setup-reserve">Minimum cash reserve</label><input className="input num" id="setup-reserve" inputMode="decimal" placeholder="Enter 0 if not set" value={reserve ?? (data.business.minimumCashCents == null ? '' : centsToInput(data.business.minimumCashCents))} onChange={(e) => setReserve(e.target.value)} required /></div>
           </div>
           <p className="hint">No budget is inferred. You can edit these values later in Cash flow planning.</p>
         </div>}
@@ -118,8 +121,8 @@ export default function FinancialOnboarding() {
           {!data.business.openingBalanceDate && !accountRows.some((a) => a.name && a.balance) && <div className="callout info"><Icon name="alert" size={16} /><span>Without starting cash, Morgan cannot show an absolute projected balance. Add it later from Cash flow or Settings.</span></div>}
           {formError && <div className="form-error" role="alert">{formError}</div>}
         </div>}
-        <div className="setup-actions">{step > 0 ? <button className="btn outline" onClick={() => setStep(step - 1)}>Back</button> : <button className="btn ghost" onClick={complete}>Skip setup for now</button>}
-          {step < 3 ? <button className="btn primary" onClick={async () => { try { if (step === 0 || step === 2) await savePosition(); setFormError(''); setStep(step + 1); } catch (e) { setFormError((e as Error).message); } }}>Continue <Icon name="arrowRight" size={16} /></button> : <button className="btn primary" disabled={busy} onClick={complete}>{busy ? 'Saving…' : 'Finish setup'} <Icon name="check" size={16} /></button>}
+        <div className="setup-actions">{step > 0 ? <button className="btn outline" onClick={() => setStep(step - 1)}>Back</button> : <span className="muted">Required · your progress saves at each step</span>}
+          {step < 3 ? <button className="btn primary" disabled={step === 1 && !expectedReviewed} onClick={async () => { try { if (step === 0) await savePosition(1); else if (step === 1) await savePosition(2); else if (step === 2) await savePosition(3); setFormError(''); } catch (e) { setFormError((e as Error).message); } }}>Continue <Icon name="arrowRight" size={16} /></button> : <button className="btn primary" disabled={busy} onClick={complete}>{busy ? 'Saving…' : 'Finish setup'} <Icon name="check" size={16} /></button>}
         </div>
       </section>
       <p className="setup-foot">Morgan works alongside accounting software. Your entered balances are estimates; no bank connection is active.</p>

@@ -12,6 +12,7 @@ import {
 import { invoicePdf } from './lib/pdf.mjs';
 import { mailConfigured, sendMail, notifyMail, localEmailPreviewEnabled, listLocalEmailPreviews } from './lib/mail.mjs';
 import * as A from './lib/analytics.mjs';
+import { parseRegistrationStatement, parseMappedStatement } from './lib/registrationStatement.mjs';
 
 const CURRENCIES = ['USD', 'EUR', 'GBP', 'CAD', 'AUD', 'EGP', 'AED', 'SAR', 'CHF', 'JPY'];
 const INVOICE_STATUSES = ['draft', 'sent', 'paid', 'void'];
@@ -22,7 +23,7 @@ const publicBusiness = (b) => ({
   id: String(b._id), name: b.name, currency: b.currency, address: b.address || '', email: b.email || '',
   invoicePrefix: b.invoicePrefix, defaultTaxRateBps: b.defaultTaxRateBps || 0, paymentTermsDays: b.paymentTermsDays ?? 14,
   openingBalanceCents: b.openingBalanceCents || 0, openingBalanceDate: b.openingBalanceDate || null, timezone: b.timezone || 'UTC',
-  financialSetupComplete: b.financialSetupComplete ?? true, industry: b.industry || '', monthlyBudgetCents: b.monthlyBudgetCents ?? null, minimumCashCents: b.minimumCashCents ?? null,
+  financialSetupComplete: b.financialSetupComplete ?? true, onboardingStep: b.onboardingStep ?? 0, isDemo: b.isDemo === true, industry: b.industry || '', monthlyBudgetCents: b.monthlyBudgetCents ?? null, minimumCashCents: b.minimumCashCents ?? null,
   cashAccounts: (b.cashAccounts || []).map(({ _id, ...a }) => ({ id: String(_id), ...a })),
 });
 const pub = ({ _id, businessId, ...rest }) => ({ id: String(_id), ...rest });
@@ -60,7 +61,7 @@ export function createApi(db, { secureCookies }) {
   const C = (n) => db.collection(n);
   // Base64 expands a 10 MB statement to roughly 13.4 MB. Keep the larger bound
   // scoped to the authenticated statement import endpoint.
-  r.use('/bank-statements/import', express.json({ limit: '17mb' }));
+  r.use(['/bank-statements/import', '/bank-statements/preview', '/auth/register', '/auth/statement-preview'], express.json({ limit: '17mb' }));
   r.use(express.json({ limit: '2mb' }));
 
   // CSRF defence: state-changing requests must carry a custom header, which cross-site forms cannot set
@@ -89,6 +90,52 @@ export function createApi(db, { secureCookies }) {
   const notifyAccount = (user, subject, text, kind = 'account_notification') => notifyMail({ db, kind, to: user.email, subject, text });
 
   /* ---------------- Auth ---------------- */
+  r.get('/bank-directory', wrap(async (req, res) => {
+    const country = String(req.query.country || '');
+    if (country !== 'US') throw bad('Morgan currently supports bank selection for the United States (US).');
+    const q = typeof req.query.q === 'string' ? req.query.q.trim().slice(0, 80) : '';
+    const query = { country };
+    if (q) query.name = { $regex: escapeRegex(q), $options: 'i' };
+    const banks = await C('bankDirectory').find(query, { projection: { _id: 0, id: 1, name: 1, state: 1, rank: 1 } }).sort({ rank: 1 }).limit(100).toArray();
+    const meta = await C('bankDirectory').findOne({ country }, { projection: { source: 1, sourceName: 1, sourceUpdatedAt: 1 } });
+    res.json({ country, currency: 'USD', banks, source: meta?.source || 'https://api.fdic.gov/banks/institutions', sourceName: meta?.sourceName || 'FDIC BankFind Suite', sourceUpdatedAt: meta?.sourceUpdatedAt || null });
+  }));
+  const statementBalanceReview = async (parsed, b) => {
+    const openingBalanceCents = cents(b.openingBalanceCents, 'Statement opening balance');
+    const closingBalanceCents = cents(b.closingBalanceCents, 'Statement closing balance');
+    const uniqueRows = dedupeRegistrationRows(parsed.rows).filter((row) => !row.duplicate);
+    const sum = uniqueRows.reduce((n, row) => n + row.amountCents, 0);
+    const calculatedClosingBalanceCents = openingBalanceCents + sum;
+    const running = uniqueRows.filter((row) => row.runningBalanceCents !== null);
+    if (running.length && running.length !== uniqueRows.length) throw bad('The statement has a running balance on only some transaction rows. Review the source or upload a consistent export.');
+    if (running.length) {
+      let current = openingBalanceCents;
+      for (const [i, row] of uniqueRows.entries()) {
+        current += row.amountCents;
+        if (Math.abs(current - row.runningBalanceCents) > 1) throw bad(`Statement running balance does not reconcile at transaction row ${row.sourceRowNumber}.`);
+      }
+    }
+    if (Math.abs(calculatedClosingBalanceCents - closingBalanceCents) > 1) throw bad(`Statement totals do not reconcile: opening balance plus ${uniqueRows.length} non-duplicate transactions gives ${calculatedClosingBalanceCents} cents, not the supplied closing balance. Check your statement period and balances.`);
+    const periodStart = uniqueRows.reduce((a, r) => r.date < a ? r.date : a, uniqueRows[0].date);
+    const periodEnd = uniqueRows.reduce((a, r) => r.date > a ? r.date : a, uniqueRows[0].date);
+    return { openingBalanceCents, closingBalanceCents, calculatedClosingBalanceCents, discrepancyCents: closingBalanceCents - calculatedClosingBalanceCents, periodStart, periodEnd, count: parsed.rows.length, duplicates: parsed.rows.length - uniqueRows.length, creditsCents: uniqueRows.reduce((s, r) => s + Math.max(0, r.amountCents), 0), debitsCents: uniqueRows.reduce((s, r) => s + Math.max(0, -r.amountCents), 0) };
+  };
+  const dedupeRegistrationRows = (rows, accountKey = 'registration') => {
+    const seen = new Set();
+    return rows.map((row) => {
+      const key = [accountKey, row.date, row.currency, row.reference ? `ref:${row.reference.toLowerCase()}` : `${row.amountCents}:${row.description.toLowerCase().replace(/\s+/g, ' ').trim()}`].join('|');
+      const duplicate = seen.has(key); seen.add(key); return { ...row, duplicate };
+    });
+  };
+  r.post('/auth/statement-preview', rateLimit({ key: 'statement-preview', limit: 10, windowMs: 3600e3 }), wrap(async (req, res) => {
+    const currency = oneOf(req.body?.currency, 'Currency', ['USD']);
+    let parsed;
+    try { parsed = await parseRegistrationStatement({ filename: req.body?.filename, base64: req.body?.sourceFileBase64, currency }); }
+    catch (error) { throw bad(error.message || 'The statement could not be processed.'); }
+    const rows = dedupeRegistrationRows(parsed.rows);
+    const uniqueRows = rows.filter((r) => !r.duplicate);
+    res.json({ rows, headers: parsed.columns, fileType: parsed.fileType, summary: { count: rows.length, duplicates: rows.length - uniqueRows.length, periodStart: uniqueRows.reduce((a, r) => r.date < a ? r.date : a, uniqueRows[0].date), periodEnd: uniqueRows.reduce((a, r) => r.date > a ? r.date : a, uniqueRows[0].date), creditsCents: uniqueRows.reduce((s, r) => s + Math.max(0, r.amountCents), 0), debitsCents: uniqueRows.reduce((s, r) => s + Math.max(0, -r.amountCents), 0) } });
+  }));
   r.post('/auth/register', rateLimit({ key: 'register', limit: 5, windowMs: 3600e3 }), wrap(async (req, res) => {
     const b = req.body || {};
     const name = str(b.name, 'Name', { required: true, max: 100 });
@@ -96,6 +143,19 @@ export function createApi(db, { secureCookies }) {
     const password = validatePassword(b.password);
     const businessName = str(b.businessName, 'Business name', { required: true, max: 120 });
     const currency = oneOf(b.currency || 'USD', 'Currency', CURRENCIES);
+    const country = oneOf(b.country, 'Country', ['US']);
+    if (currency !== 'USD') throw bad('United States bank statement registration requires USD.');
+    if (b.statementCurrencyConfirmed !== true) throw bad('Confirm the statement is denominated in USD before registering it.');
+    const bank = await C('bankDirectory').findOne({ country, id: str(b.bankId, 'Bank', { required: true, max: 32 }) });
+    if (!bank) throw bad('Select a bank from the current bank directory.');
+    const filename = str(b.statementFilename, 'Statement filename', { required: true, max: 180 });
+    let parsed, statementSummary;
+    try { parsed = await parseRegistrationStatement({ filename, base64: b.statementFileBase64, currency }); statementSummary = await statementBalanceReview(parsed, b); }
+    catch (error) { throw bad(error.message || 'The statement could not be validated.'); }
+    if (b.statementReviewed !== true) throw bad('Review the extracted statement transactions and confirm before creating your account.');
+    const reviewedRows = dedupeRegistrationRows(parsed.rows, b.bankId);
+    const duplicateCount = reviewedRows.filter((row) => row.duplicate).length;
+    if (duplicateCount && b.duplicatesReviewed !== true) throw bad('Confirm that repeated statement rows should be skipped before creating the account.');
     const timezone = validTz(b.timezone) ? b.timezone : 'UTC';
     if (await C('users').findOne({ email: mail })) throw new HttpError(409, 'An account with this email already exists');
     const businessId = new ObjectId();
@@ -103,19 +163,52 @@ export function createApi(db, { secureCookies }) {
     // Email confirmation is temporarily disabled. Password validation and the normal
     // server-side session remain required for access.
     const user = { _id: new ObjectId(), name, email: mail, role: isConfiguredAdmin ? 'admin' : 'user', passwordHash: await hashPassword(password), businessId, emailVerified: true, emailVerificationDisabled: true, createdAt: new Date() };
+    const accountId = new ObjectId(), importId = new ObjectId(), importedAt = new Date();
+    const statementQuery = { businessId };
+    try {
     await C('businesses').insertOne({
       _id: businessId, name: businessName, currency, timezone, invoicePrefix: 'INV-', invoiceSeq: 0, defaultTaxRateBps: 0,
-      paymentTermsDays: 14, openingBalanceCents: 0, openingBalanceDate: null, financialSetupComplete: false, monthlyBudgetCents: null, minimumCashCents: null, ownerId: user._id, createdAt: new Date(),
+      paymentTermsDays: 14, openingBalanceCents: statementSummary.closingBalanceCents, openingBalanceDate: statementSummary.periodEnd, financialSetupComplete: false, onboardingStep: 0, country, monthlyBudgetCents: null, minimumCashCents: null, ownerId: user._id, createdAt: new Date(),
     });
-    try {
-      await C('users').insertOne(user);
+    await C('bankAccounts').insertOne({ _id: accountId, businessId, institution: bank.name, directoryId: bank.id, country, name: 'Primary business account', type: 'checking', currency, accountNumber: '', openingBalanceCents: statementSummary.openingBalanceCents, openingBalanceDate: statementSummary.periodStart, status: 'active', createdAt: importedAt, updatedAt: importedAt });
+    const docs = reviewedRows.filter((row) => !row.duplicate).map((row) => {
+      const fingerprint = createHash('sha256').update([String(accountId), row.date, currency, row.reference ? `ref:${row.reference.toLowerCase()}` : `${row.amountCents}:${row.description.toLowerCase().replace(/\s+/g, ' ').trim()}`].join('|')).digest('hex');
+      return { businessId, accountId, date: row.date, description: row.description, vendor: row.vendor || '', category: 'Uncategorized', financialClass: 'unclassified', amountCents: row.amountCents, currency, reference: row.reference, runningBalanceCents: row.runningBalanceCents, sourceRowNumber: row.sourceRowNumber, source: 'bank-statement', importId, fingerprint, reconciliationStatus: 'unmatched', createdAt: importedAt, updatedAt: importedAt };
+    });
+    await C('transactions').insertMany(docs);
+    await C('statementImports').insertOne({ _id: importId, businessId, accountId, filename, fileType: parsed.fileType, sourceFile: parsed.sourceFile, sourceFileSha256: parsed.sourceFileSha256, importedAt, status: 'complete', ...statementSummary, transactionCount: parsed.rows.length, importedCount: docs.length, duplicateCount });
+    await C('users').insertOne(user);
     } catch (e) {
-      await C('businesses').deleteOne({ _id: businessId });
+      await Promise.all([
+        C('transactions').deleteMany(statementQuery), C('statementImports').deleteMany(statementQuery),
+        C('bankAccounts').deleteMany(statementQuery), C('businesses').deleteOne({ _id: businessId }),
+        C('users').deleteOne({ _id: user._id }),
+      ]);
       if (e.code === 11000) throw new HttpError(409, 'An account with this email already exists');
       throw e;
     }
     setCookie(res, await createSession(db, user, req));
     res.status(201).json({ user: publicUser(user), business: publicBusiness(await business({ businessId: user.businessId })) });
+  }));
+
+  r.post('/auth/demo', rateLimit({ key: 'demo-account', limit: 10, windowMs: 3600e3 }), wrap(async (req, res) => {
+    const id = new ObjectId(), businessId = new ObjectId(), now = new Date();
+    const user = { _id: id, name: 'Morgan Demo User', email: `demo-${id}@example.invalid`, role: 'user', passwordHash: '', businessId, emailVerified: true, isDemo: true, createdAt: now };
+    const openingDate = today();
+    const businessDoc = { _id: businessId, name: 'Northstar Creative Studio', currency: 'USD', timezone: 'America/New_York', invoicePrefix: 'DEMO-', invoiceSeq: 0, defaultTaxRateBps: 0, paymentTermsDays: 30, openingBalanceCents: 8426000, openingBalanceDate: openingDate, financialSetupComplete: true, onboardingStep: 4, isDemo: true, monthlyBudgetCents: 6000000, minimumCashCents: 1500000, cashAccounts: [{ _id: new ObjectId(), name: 'Operating account · simulated', type: 'checking', currency: 'USD', balanceCents: 8426000, balanceDate: openingDate, notes: 'Simulated demo data' }], ownerId: id, createdAt: now };
+    await C('businesses').insertOne(businessDoc); await C('users').insertOne(user);
+    const sample = [
+      [addDays(openingDate, -32),'Retainer · Acme Studio',1250000],[addDays(openingDate, -28),'Payroll · Monthly',-2480000],[addDays(openingDate, -23),'Cloud software',-18400],[addDays(openingDate, -18),'Project milestone · Pine & Co',850000],[addDays(openingDate, -12),'Office and production',-324000],[addDays(openingDate, -6),'Retainer · Northstar Media',1620000],
+    ];
+    await C('transactions').insertMany(sample.map(([dateValue, description, amountCents]) => ({ _id: new ObjectId(), businessId, date: dateValue, description, vendor: '', category: amountCents > 0 ? 'Client income' : 'Operating expenses', financialClass: amountCents > 0 ? 'income' : 'expense', amountCents, currency: 'USD', source: 'demo-simulated', simulated: true, createdAt: now })));
+    await C('planningItems').insertMany([{ businessId, name: 'Monthly payroll', type: 'expense', category: 'Payroll', amountCents: 2480000, cadence: 'monthly', nextDate: addDays(openingDate, 7), endDate: null, confidence: 'estimated', notes: 'Simulated demo assumption', currency: 'USD', simulated: true, createdAt: now }, { businessId, name: 'Client retainer', type: 'income', category: 'Client income', amountCents: 1250000, cadence: 'monthly', nextDate: addDays(openingDate, 14), endDate: null, confidence: 'contracted', notes: 'Simulated demo assumption', currency: 'USD', simulated: true, createdAt: now }]);
+    const demoCustomerId = new ObjectId(), invoiceId = new ObjectId(), billId = new ObjectId(), demoAccountId = new ObjectId();
+    await C('customers').insertOne({ _id: demoCustomerId, businessId, name: 'Acme Studio · Sample Client', email: 'finance@example.invalid', address: 'Sample record', simulated: true, createdAt: now });
+    await C('invoices').insertOne({ _id: invoiceId, businessId, customerId: demoCustomerId, customer: { name: 'Acme Studio · Sample Client', email: 'finance@example.invalid', address: 'Sample record' }, number: 'DEMO-0001', issueDate: addDays(openingDate, -14), dueDate: addDays(openingDate, 7), items: [{ description: 'Monthly creative services · simulated', quantity: 1, unitCents: 1250000 }], taxRateBps: 0, discountCents: 0, notes: 'Simulated demonstration record.', status: 'sent', payments: [], sentAt: now, sentVia: 'demo-simulated', createdAt: now, updatedAt: now, simulated: true });
+    await C('bills').insertOne({ _id: billId, businessId, vendor: 'Cloudline Systems · Sample Vendor', description: 'Production software · simulated', category: 'Software', amountCents: 68400, issueDate: addDays(openingDate, -3), dueDate: addDays(openingDate, 3), status: 'unpaid', payments: [], notes: 'Simulated demonstration record.', simulated: true, createdAt: now, updatedAt: now });
+    await C('bankAccounts').insertOne({ _id: demoAccountId, businessId, institution: 'Simulated account', name: 'Operating account · sample', type: 'checking', currency: 'USD', accountNumber: '', openingBalanceCents: 8426000, openingBalanceDate: openingDate, status: 'active', simulated: true, createdAt: now, updatedAt: now });
+    setCookie(res, await createSession(db, user, req));
+    res.status(201).json({ user: publicUser(user), business: publicBusiness(businessDoc) });
   }));
 
   r.post('/auth/verify-email', rateLimit({ key: 'verify-email', limit: 10, windowMs: 3600e3 }), wrap(async (req, res) => {
@@ -196,6 +289,12 @@ export function createApi(db, { secureCookies }) {
 
   // Everything below requires a session. "Today" is the business's local date, not the server's.
   r.use(requireAuth);
+  r.use(wrap(async (req, _res, next) => {
+    const b = await business(req);
+    if (!b) throw new HttpError(403, 'This account has no active business workspace.');
+    if (b.isDemo !== true && b.financialSetupComplete !== true && req.path !== '/financial-setup' && req.path !== '/planning-items' && !req.path.startsWith('/planning-items/')) throw new HttpError(403, 'Complete the required financial onboarding before opening this workspace.');
+    next();
+  }));
   r.use(wrap(async (req, _res, next) => {
     const b = await C('businesses').findOne({ _id: req.businessId }, { projection: { timezone: 1 } });
     req.today = todayIn(b?.timezone);
@@ -334,7 +433,26 @@ export function createApi(db, { secureCookies }) {
       set.openingBalanceCents = total;
       set.openingBalanceDate = accounts[0]?.balanceDate || null;
     }
-    if (b.complete === true) set.financialSetupComplete = true;
+    if (before?.isDemo !== true && before?.financialSetupComplete !== true) {
+      if (b.onboardingStep !== undefined) {
+        const step = int(b.onboardingStep, 'Onboarding step', { min: 0, max: 4 });
+        const currentStep = before.onboardingStep || 0;
+        if (step < currentStep || step > currentStep + 1) throw bad('Complete each onboarding step in order.');
+        if (step > currentStep && currentStep === 0 && await C('statementImports').countDocuments(scoped(req)) < 1) throw bad('A reviewed statement is required before onboarding can continue.');
+        if (step > currentStep && currentStep === 1 && b.expectedActivityReviewed !== true) throw bad('Confirm that you reviewed expected income and recurring expenses, including if you have none to add.');
+        if (step > currentStep && currentStep === 2) {
+          const budgetCents = b.monthlyBudgetCents === undefined ? before.monthlyBudgetCents : set.monthlyBudgetCents;
+          const reserveCents = b.minimumCashCents === undefined ? before.minimumCashCents : set.minimumCashCents;
+          if (budgetCents === null || budgetCents === undefined || reserveCents === null || reserveCents === undefined) throw bad('Enter a monthly budget and a minimum cash reserve. Use zero if you do not set a limit.');
+        }
+        set.onboardingStep = step;
+      }
+      if (b.complete === true) {
+        if ((before.onboardingStep || 0) !== 3) throw bad('Complete the required onboarding steps before opening Morgan.');
+        if (before.monthlyBudgetCents === null || before.minimumCashCents === null) throw bad('A monthly budget and minimum cash reserve are required.');
+        set.financialSetupComplete = true; set.onboardingStep = 4;
+      }
+    } else if (b.complete === true) { set.financialSetupComplete = true; }
     await C('businesses').updateOne({ _id: req.businessId }, { $set: set });
     const updated = await business(req);
     const emailNotification = b.complete === true && before?.financialSetupComplete !== true
@@ -649,7 +767,15 @@ export function createApi(db, { secureCookies }) {
     return account;
   };
   const getStatementReview = async (req, account) => {
-    const rows = statementRows(req, account);
+    const filename = str(req.body.filename, 'Filename', { required: true, max: 180 });
+    let parsed;
+    try {
+      parsed = req.body.columnMap
+        ? await parseMappedStatement({ filename, base64: req.body.sourceFileBase64, currency: account.currency, mapping: req.body.columnMap })
+        : await parseRegistrationStatement({ filename, base64: req.body.sourceFileBase64, currency: account.currency });
+    } catch (error) { throw bad(error.message || 'The statement could not be processed.'); }
+    req.statementSource = parsed;
+    const rows = statementRows({ ...req, body: { ...req.body, rows: parsed.rows } }, account);
     const found = await C('transactions').find(scoped(req, { accountId: account._id, fingerprint: { $in: rows.map((r) => r.fingerprint) } }), { projection: { fingerprint: 1 } }).toArray();
     const prior = new Set(found.map((t) => t.fingerprint));
     const bills = await C('bills').find(scoped(req, { status: { $in: ['unpaid', 'partial'] } })).toArray();
@@ -674,25 +800,25 @@ export function createApi(db, { secureCookies }) {
   };
   r.post('/bank-statements/preview', wrap(async (req, res) => {
     const account = await findStatementAccount(req);
-    res.json(await getStatementReview(req, account));
+    const review = await getStatementReview(req, account);
+    res.json({ ...review, fileType: req.statementSource.fileType, headers: req.body.columnMap || req.statementSource.columns });
   }));
   r.post('/bank-statements/import', wrap(async (req, res) => {
     const account = await findStatementAccount(req), review = await getStatementReview(req, account);
+    if (review.summary.openingBalanceCents === null || review.summary.closingBalanceCents === null) throw bad('Enter the statement opening and closing balances before importing.');
+    if (Math.abs(review.summary.discrepancyCents) > 1) throw bad('The statement does not reconcile. Review the balances and transaction mapping before importing.');
     const importId = new ObjectId(), importedAt = new Date();
     const filename = str(req.body.filename || 'Statement.csv', 'Filename', { required: true, max: 180 });
-    const fileType = oneOf(filename.split('.').at(-1)?.toLowerCase(), 'File type', ['csv', 'xlsx', 'pdf']);
+    const fileType = oneOf(req.statementSource.fileType, 'File type', ['csv', 'xlsx', 'pdf']);
     const encodedFile = req.body.sourceFileBase64;
     let sourceFile = null, sourceFileSha256 = null;
     if (typeof encodedFile !== 'string' || !encodedFile.length) throw bad('The original statement file is required to complete the import.');
     if (!/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(encodedFile)) throw bad('The statement file could not be read. Choose it again and retry.');
     sourceFile = Buffer.from(encodedFile, 'base64');
     if (!sourceFile.length || sourceFile.length > 10 * 1024 * 1024) throw bad('Statement files must be 10 MB or smaller.');
-    const isPdf = sourceFile.subarray(0, 1024).includes(Buffer.from('%PDF-'));
-    const isXlsx = sourceFile.subarray(0, 4).equals(Buffer.from([0x50, 0x4b, 0x03, 0x04]));
-    const isCsv = !sourceFile.includes(0) && !sourceFile.subarray(0, 1024).includes(Buffer.from('%PDF-'));
-    if ((fileType === 'pdf' && !isPdf) || (fileType === 'xlsx' && !isXlsx) || (fileType === 'csv' && !isCsv)) throw bad('The file contents do not match the selected file type.');
-    sourceFileSha256 = createHash('sha256').update(sourceFile).digest('hex');
-    const rows = review.rows.filter((r) => !r.duplicate && req.body.rows.find((input) => input.date === r.date && Number(input.amountCents) === r.amountCents && input.description === r.description && input.include !== false));
+    if (req.statementSource.sourceFileSha256 !== createHash('sha256').update(sourceFile).digest('hex')) throw bad('The statement changed after review. Upload and review the file again.');
+    sourceFileSha256 = req.statementSource.sourceFileSha256;
+    const rows = review.rows.filter((r) => !r.duplicate);
     const docs = rows.map((row) => ({ businessId: req.businessId, accountId: account._id, date: row.date, description: row.description, vendor: row.vendor, category: row.category, financialClass: row.financialClass, amountCents: row.amountCents, currency: row.currency, reference: row.reference, runningBalanceCents: row.runningBalanceCents, sourceRowNumber: row.sourceRowNumber, source: 'bank-statement', importId, fingerprint: row.fingerprint, reconciliationStatus: 'unmatched', createdAt: importedAt, updatedAt: importedAt }));
     const session = db.client?.startSession?.();
     let transactionalImport = false;
@@ -1049,6 +1175,14 @@ export function createApi(db, { secureCookies }) {
       return { account, records, statements };
     }));
     const positionAt = (asOf) => {
+      // Settings/onboarding cashAccounts represent one user-confirmed aggregate starting position.
+      // Use it once, then roll forward statement and manually entered transactions after its date.
+      if ((biz.cashAccounts || []).length && biz.openingBalanceDate && biz.openingBalanceDate <= asOf) {
+        const later = txns.filter((item) => item.date > biz.openingBalanceDate && item.date <= asOf);
+        const balance = biz.openingBalanceCents + later.reduce((sum, item) => sum + item.amountCents, 0);
+        const last = later.reduce((latest, item) => item.date > latest ? item.date : latest, biz.openingBalanceDate);
+        return { balance, knownBalance: balance, missingAccounts: [], asOf: last, source: 'opening-balance' };
+      }
       if (sources.length) {
         const parts = sources.map(({ account, records, statements }) => {
           const calculation = calculateAccountBalance(account, records, statements, asOf);
@@ -1056,10 +1190,14 @@ export function createApi(db, { secureCookies }) {
         });
         const missingAccounts = parts.filter((part) => part.balance === null).map((part) => part.account.name);
         const knownParts = parts.filter((part) => part.balance !== null);
-        const knownBalance = knownParts.length ? knownParts.reduce((sum, part) => sum + part.balance, 0) : null;
+        let knownBalance = knownParts.length ? knownParts.reduce((sum, part) => sum + part.balance, 0) : null;
         const complete = missingAccounts.length === 0;
         const sourceKinds = [...new Set(parts.map((part) => part.source).filter(Boolean))];
         const asOfDate = complete ? parts.reduce((oldest, part) => part.asOf < oldest ? part.asOf : oldest, asOf) : null;
+        if (complete && knownBalance !== null) {
+          const latestAccountBaseline = parts.reduce((latest, part) => part.asOf > latest ? part.asOf : latest, '');
+          knownBalance += txns.filter((item) => !item.accountId && item.date > latestAccountBaseline && item.date <= asOf).reduce((sum, item) => sum + item.amountCents, 0);
+        }
         return { balance: complete ? knownBalance : null, knownBalance, missingAccounts, asOf: asOfDate, source: complete ? (sourceKinds.length === 1 ? sourceKinds[0] : 'bank-accounts') : null };
       }
       const manualTxns = txns.filter((item) => !item.accountId);

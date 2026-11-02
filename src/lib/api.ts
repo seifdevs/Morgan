@@ -36,7 +36,7 @@ export type User = { id: string; name: string; email: string; role?: 'admin' | '
 export type Business = {
   id: string; name: string; currency: string; address: string; email: string; invoicePrefix: string;
   defaultTaxRateBps: number; paymentTermsDays: number; openingBalanceCents: number; openingBalanceDate: string | null; timezone: string;
-  financialSetupComplete: boolean; industry: string; monthlyBudgetCents: number | null; minimumCashCents: number | null;
+  financialSetupComplete: boolean; onboardingStep: number; isDemo?: boolean; industry: string; monthlyBudgetCents: number | null; minimumCashCents: number | null;
   cashAccounts: { id: string; name: string; type: 'checking' | 'savings' | 'cash' | 'other'; currency: string; balanceCents: number; balanceDate: string; notes: string }[];
 };
 export type Txn = {

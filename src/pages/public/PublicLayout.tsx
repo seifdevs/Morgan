@@ -6,10 +6,10 @@ import { useAuth } from '../../lib/auth';
 
 const links = [
   { to: '/features', label: 'Product' },
-  { to: '/agency-financial-management', label: 'Agencies' },
   { to: '/pricing', label: 'Pricing' },
-  { to: '/resources', label: 'Resources' },
   { to: '/about', label: 'About' },
+  { to: '/resources', label: 'Resources' },
+  { to: '/contact', label: 'Contact' },
 ];
 const EASE = [0.16, 1, 0.3, 1] as const;
 
@@ -35,6 +35,34 @@ export function PublicLayout() {
 
   useEffect(() => { setOpen(false); setHover(null); }, [loc.pathname]);
   useEffect(() => {
+    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+    const root = document.querySelector('.public-site');
+    if (!root) return;
+    const nodes = root.querySelectorAll<HTMLElement>([
+      '.home > section:not(.lh)', '.page > .page-intro', '.page > section', '.page > .faq-group',
+      '.page > .module', '.page > .mx-product-deep', '.page > .mx-product-use',
+      '.page > .mx-contact-layout', '.page > .mx-about-opening', '.page > .mx-about-philosophy',
+      '.page > .mx-about-principles', '.page > .mx-about-close', '.page > .mx-full-pricing',
+      '.page .mx-resource-card', '.page > .mx-trial-note', '.pub-footer',
+      '.page > .guide-list > li',
+    ].join(','));
+    if (!nodes.length) return;
+    nodes.forEach((node) => node.classList.add('motion-reveal-pending'));
+    if (!('IntersectionObserver' in window)) {
+      nodes.forEach((node) => node.classList.replace('motion-reveal-pending', 'motion-revealed'));
+      return;
+    }
+    const observer = new IntersectionObserver((entries) => {
+      entries.forEach((entry) => {
+        if (!entry.isIntersecting) return;
+        entry.target.classList.replace('motion-reveal-pending', 'motion-revealed');
+        observer.unobserve(entry.target);
+      });
+    }, { threshold: 0.08, rootMargin: '0px 0px -4% 0px' });
+    nodes.forEach((node) => observer.observe(node));
+    return () => { observer.disconnect(); nodes.forEach((node) => node.classList.remove('motion-reveal-pending', 'motion-revealed')); };
+  }, [loc.pathname]);
+  useEffect(() => {
     const on = () => setScrolled(window.scrollY > 12);
     on();
     window.addEventListener('scroll', on, { passive: true });
@@ -49,7 +77,7 @@ export function PublicLayout() {
   }, [open]);
 
   return (
-    <>
+    <div className="public-site">
       <a className="skip-link" href="#main">Skip to content</a>
       <header className={`mast ${scrolled || open ? 'solid' : ''} ${home ? 'on-home' : ''}`}>
         <div className="mast-inner">
@@ -99,7 +127,7 @@ export function PublicLayout() {
 
       <main id="main" className={home ? 'pub-main home-main' : 'pub-main'}><div className="route" key={loc.pathname}><Outlet /></div></main>
       <Footer />
-    </>
+    </div>
   );
 }
 
@@ -112,9 +140,9 @@ function Footer() {
           <p className="pf-line">Clarity without shortcuts, <span className="serif">confidence without overstatement.</span></p>
         </div>
         <nav className="pf-cols" aria-label="Footer">
-          <div><h4>Product</h4><Link to="/features">Overview</Link><Link to="/agency-financial-management">For agencies</Link><Link to="/agency-cash-flow">Agency cash flow</Link><Link to="/agency-profitability">Agency profitability</Link><Link to="/pricing">Pricing</Link><Link to="/signup">Create account</Link><Link to="/login">Log in</Link></div>
-          <div><h4>Company</h4><Link to="/about">About</Link><Link to="/contact">Contact</Link></div>
-          <div><h4>Resources</h4><Link to="/resources">Guides</Link><Link to="/faq">FAQ</Link></div>
+          <div><h4>Product</h4><Link to="/features">Overview</Link><Link to="/pricing">Pricing</Link><Link to="/signup">Create account</Link><Link to="/login">Log in</Link></div>
+          <div><h4>Company</h4><Link to="/about">About Morgan</Link><Link to="/contact">Contact</Link></div>
+          <div><h4>Resources</h4><Link to="/resources">Field notes</Link><Link to="/faq">FAQ</Link></div>
         </nav>
       </div>
       <div className="pf-base">

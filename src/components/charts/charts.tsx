@@ -159,11 +159,11 @@ export function FlowBars({ rows, format, height = 260, onSelect }: {
         <div className="tooltip" style={{ left: Math.min(width - 190, Math.max(0, pad.l + band * hover + band / 2 - 95)) }}>
           <div className="tt-title">{rows[hover].label}</div>
           <div className="tt-row"><i style={{ background: 'var(--gold)' }} />Income<b className="num">{format(rows[hover].income)}</b></div>
-          <div className="tt-row"><i style={{ background: '#5a6a79' }} />Expenses<b className="num">{format(rows[hover].expenses)}</b></div>
+          <div className="tt-row"><i style={{ background: '#8d98a5' }} />Expenses<b className="num">{format(rows[hover].expenses)}</b></div>
           <div className="tt-row"><i style={{ background: 'var(--text)' }} />Net<b className={`num ${rows[hover].net >= 0 ? 'pos' : 'neg'}`}>{format(rows[hover].net)}</b></div>
         </div>
       )}
-      <Legend items={[{ label: 'Income', color: 'var(--gold)' }, { label: 'Expenses', color: '#5a6a79' }, { label: 'Net', color: 'var(--text)' }]} />
+      <Legend items={[{ label: 'Income', color: 'var(--gold)' }, { label: 'Expenses', color: '#8d98a5' }, { label: 'Net', color: 'var(--text)' }]} />
     </div>
   );
 }

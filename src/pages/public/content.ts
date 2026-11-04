@@ -23,8 +23,16 @@ export const faqs: [string, [string, string][]][] = [
     ['Can Morgan email invoices?', 'Yes, when the server administrator has configured an email provider. If email is not configured, Morgan tells you so — you can download the PDF and mark the invoice as sent yourself.'],
     ['Does Morgan collect payments?', 'No. Morgan records payments you receive so balances and receivables stay accurate. It does not process cards or move money.'],
   ]],
+  ['Financial tools', [
+    ['What does Monitor look for?', 'Monitor can surface overdue invoices, possible duplicate records, recurring cost changes, and timing patterns from the records in your workspace. Each finding is a review prompt with its supporting records.'],
+    ['How does Horizon make a forecast?', 'Horizon calculates daily 30-, 60- and 90-day estimates using a starting cash position, recorded activity, open invoices and bills, saved plans and visible scenario assumptions. A forecast is not a guarantee.'],
+    ['Can I save and compare scenarios?', 'Yes. Horizon scenarios are saved separately from your financial records and can be compared with the baseline estimate. A scenario does not change the ledger.'],
+    ['How does Morgan Intelligence use AI?', 'When Gemini is configured, Morgan sends your question and a bounded business context to Google’s Gemini service for an explanation. Financial figures are calculated by Morgan, then checked against supplied values; AI does not edit records.'],
+    ['Can I download a report?', 'Morgan can generate a financial report PDF from the records and forecast context available in your workspace. Review the period and underlying records before sharing it.'],
+  ]],
   ['Pricing', [
-    ['What does Morgan cost today?', 'Morgan is free to use today. Pro at $49.99 per month and Business at $199.99 per month are planned prices; paid checkout is not active.'],
-    ['Can I buy Pro or Business?', 'Not yet. There is no checkout, subscription, plan-specific feature access, or charge. Creating an account gives you access to the current workspace without payment details.'],
+    ['What does Morgan cost today?', 'Starter is free. Pro is listed at $49.99 per month or $499 per year, and Max at $199.99 per month or $1,499 per year. Starter limits are active; paid checkout and activation are not configured. Starter has no trial.'],
+    ['Can I buy Pro or Max?', 'Not yet. There is no checkout, subscription or charge. New accounts receive the active Starter plan without payment details; paid plans will require verified billing before they can be activated.'],
+    ['Can I cancel a paid plan?', 'There is no paid subscription to cancel today. Subscription management will be available when billing is configured.'],
   ]],
 ];

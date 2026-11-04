@@ -202,6 +202,25 @@ export function insights({ txns, invoices, bills, today, currencyFmt }) {
     }
   }
 
+  // 3b. A single charge far above this vendor's recent median. Always links to the source row.
+  const vendorHistory = new Map();
+  for (const t of expenses) if (t.vendor && t.date >= addDays(today, -180)) {
+    const key = t.vendor.toLowerCase(); (vendorHistory.get(key) || vendorHistory.set(key, []).get(key)).push(t);
+  }
+  for (const rows of vendorHistory.values()) {
+    if (rows.length < 4) continue;
+    const ordered = [...rows].sort((a, b) => a.date.localeCompare(b.date));
+    const prior = ordered.slice(0, -1).map((t) => -t.amountCents).sort((a, b) => a - b);
+    const median = prior[Math.floor(prior.length / 2)];
+    const latest = ordered.at(-1), amount = -latest.amountCents;
+    if (amount >= 10000 && amount >= median * 2.5) out.push({
+      id: `unusual-${latest._id}`, kind: 'unusual-expense', severity: 'medium',
+      title: `Unusually large charge from ${latest.vendor}`,
+      detail: `The ${f(amount)} charge on ${fd(latest.date)} is at least 2.5× the ${f(median)} median of ${prior.length} earlier charges from this vendor. Review the source transaction.`,
+      amountCents: amount, evidence: [String(latest._id)], evidenceType: 'transaction',
+    });
+  }
+
   // 4. Overdue receivables.
   const overdue = invoices.filter((i) => i.displayStatus === 'overdue');
   if (overdue.length) {
@@ -248,11 +267,12 @@ const recurrenceNext = (iso, cadence) => {
   return d.toISOString().slice(0, 10);
 };
 
-export function cashflow({ txns, invoices, bills, plannedItems = [], business, today, weeks = 13, startingCash }) {
+export function cashflow({ txns, invoices, bills, plannedItems = [], business, today, weeks = 13, days, startingCash }) {
   const opening = startingCash === undefined ? cashBalance(txns, business, today) : startingCash;
-  const horizonEnd = addDays(today, weeks * 7 - 1);
-  const rows = Array.from({ length: weeks }, (_, i) => ({
-    week: i, start: addDays(today, i * 7), end: addDays(today, i * 7 + 6), inflows: 0, outflows: 0, items: [],
+  const horizonEnd = addDays(today, days ?? weeks * 7 - 1);
+  const rowCount = days === undefined ? weeks : Math.ceil((days + 1) / 7);
+  const rows = Array.from({ length: rowCount }, (_, i) => ({
+    week: i, start: addDays(today, i * 7), end: addDays(today, Math.min(i * 7 + 6, days ?? weeks * 7 - 1)), inflows: 0, outflows: 0, items: [],
   }));
   const place = (d) => (d < today ? 0 : Math.floor(daysBetween(today, d) / 7));
   let overdueIn = 0, overdueOut = 0;
@@ -270,7 +290,7 @@ export function cashflow({ txns, invoices, bills, plannedItems = [], business, t
     const w = rows[place(b.dueDate)];
     w.outflows += dueCents;
     if (b.dueDate < today) overdueOut += dueCents;
-    w.items.push({ type: 'bill', id: String(b._id), label: b.vendor, amountCents: -dueCents, date: b.dueDate, overdue: b.dueDate < today });
+    w.items.push({ type: 'bill', id: String(b._id || b.id), label: b.vendor, amountCents: -dueCents, date: b.dueDate, overdue: b.dueDate < today });
   }
   for (const item of plannedItems) {
     // Invoiced expectations belong to the receivables ledger, avoiding a second forecast entry.

@@ -10,16 +10,23 @@ import { hashToken } from '../server/lib/auth.mjs';
 let mongod, client, server, base, db, realFetch, originalEnv;
 const resendRequests = [];
 let resendFailure = null;
+const geminiRequests = [];
+let geminiPayload = { answer: 'Based on your saved records, review the scheduled movement.', citations: [], recommendations: ['Review the forecast movement.'], unsupported: false };
+let geminiStatus = 200;
 
 before(async () => {
-  originalEnv = Object.fromEntries(['RESEND_API_KEY', 'MAIL_FROM', 'APP_URL', 'MORGAN_ADMIN_EMAIL'].map((k) => [k, process.env[k]]));
-  Object.assign(process.env, { RESEND_API_KEY: 're_test_suite_only', MAIL_FROM: 'Morgan <no-reply@example.test>', APP_URL: 'https://app.example.test', MORGAN_ADMIN_EMAIL: 'seifeldinashrafa@gmail.com' });
+  originalEnv = Object.fromEntries(['RESEND_API_KEY', 'MAIL_FROM', 'APP_URL', 'MORGAN_ADMIN_EMAIL', 'GEMINI_API_KEY'].map((k) => [k, process.env[k]]));
+  Object.assign(process.env, { RESEND_API_KEY: 're_test_suite_only', MAIL_FROM: 'Morgan <no-reply@example.test>', APP_URL: 'https://app.example.test', MORGAN_ADMIN_EMAIL: 'seifeldinashrafa@gmail.com', GEMINI_API_KEY: 'gemini_test_suite_only' });
   realFetch = globalThis.fetch;
   globalThis.fetch = async (input, init) => {
     if (String(input).startsWith('https://api.resend.com/emails')) {
       const request = JSON.parse(init.body); resendRequests.push(request);
       if (resendFailure) return new Response(JSON.stringify(resendFailure.body), { status: resendFailure.status, headers: { 'content-type': 'application/json' } });
       return new Response(JSON.stringify({ id: `resend_test_${resendRequests.length}` }), { status: 200, headers: { 'content-type': 'application/json' } });
+    }
+    if (String(input).startsWith('https://generativelanguage.googleapis.com/')) {
+      geminiRequests.push({ url: String(input), headers: init.headers, body: JSON.parse(init.body) });
+      return new Response(JSON.stringify({ candidates: [{ content: { parts: [{ text: JSON.stringify(geminiPayload) }] } }] }), { status: geminiStatus, headers: { 'content-type': 'application/json', ...(geminiStatus === 429 && { 'retry-after': '20' }) } });
     }
     return realFetch(input, init);
   };
@@ -31,6 +38,7 @@ before(async () => {
 after(async () => {
   server?.close(); await client?.close(); await mongod?.stop();
   globalThis.fetch = realFetch;
+  for (const x of Object.keys(geminiPayload)) delete geminiPayload[x];
   for (const [key, value] of Object.entries(originalEnv || {})) value === undefined ? delete process.env[key] : process.env[key] = value;
 });
 
@@ -375,6 +383,152 @@ test('opening cash edited in Settings is the shared Overview, cash flow and fore
   assert.ok((await a.call('GET', '/cashflow')).body.weeks.flatMap((week) => week.items).some((item) => item.label === 'Planned hosting renewal'));
 });
 
+test('Horizon scenarios persist, recalculate the real forecast, and stay business-isolated', async () => {
+  const a = agent(), b = agent(); await reg(a, 'horizon-a@example.com'); await reg(b, 'horizon-b@example.com');
+  const today = (await a.call('GET', '/financial-setup')).body.today;
+  const start = new Date(`${today}T00:00:00Z`); start.setUTCDate(start.getUTCDate() + 5);
+  const startDate = start.toISOString().slice(0, 10);
+  const saved = await a.call('POST', '/horizon/scenarios', { name: 'Studio equipment', assumptions: [{ type: 'large-purchase', name: 'Camera kit', startDate, amountCents: 500000, cadence: 'once' }] });
+  assert.equal(saved.status, 201);
+  assert.equal((await a.call('GET', '/horizon/scenarios')).body[0].name, 'Studio equipment');
+  assert.equal((await b.call('GET', `/horizon?scenarioId=${saved.body.id}`)).status, 404);
+  const base = await a.call('GET', '/horizon?days=30');
+  const scenario = await a.call('GET', `/horizon?days=30&scenarioId=${saved.body.id}`);
+  assert.equal(scenario.status, 200);
+  assert.equal(scenario.body.forecasts.base.length, 30, 'Starter does not receive forecast points beyond its allowance');
+  assert.equal(scenario.body.checkpoints.length, 1);
+  assert.equal(scenario.body.forecasts.base[29].balanceCents, base.body.forecasts.base[29].balanceCents - 500000, 'saved scenario assumptions are applied exactly, without probability discounts');
+  assert.equal((await b.call('GET', '/horizon/scenarios')).body.length, 0);
+  assert.equal((await a.call('PATCH', `/horizon/scenarios/${saved.body.id}`, { name: 'Updated equipment', assumptions: [{ type: 'large-purchase', name: 'Camera kit', startDate, amountCents: 600000, cadence: 'once' }] })).status, 200);
+  assert.equal((await a.call('GET', '/horizon/scenarios')).body[0].name, 'Updated equipment');
+  assert.equal((await a.call('DELETE', `/horizon/scenarios/${saved.body.id}`)).status, 200);
+  assert.equal((await a.call('POST', '/horizon/scenarios', { name: 'Replacement', assumptions: [{ type: 'large-purchase', name: 'Purchase', startDate, amountCents: 100, cadence: 'once' }] })).status, 201, 'deleting a scenario frees its slot');
+});
+
+test('Starter entitlements are server enforced and usage is visible with a UTC reset', async () => {
+  const a = agent(); await reg(a, 'entitlements-starter@example.com');
+  const before = await a.call('GET', '/usage');
+  assert.equal(before.status, 200); assert.equal(before.body.plan.id, 'starter');
+  assert.equal(before.body.usage.financialRecords.limit, 250);
+  assert.equal(before.body.usage.financialRecords.used, 1, 'the accepted registration statement row counts');
+  assert.equal(before.body.period.timezone, 'UTC'); assert.match(before.body.period.resetsAt, /^2026-12-01T00:00:00\.000Z$/);
+  await a.call('PATCH', '/account', { name: 'Starter owner', planId: 'max', price: 0, limits: { financialRecords: 999999 } });
+  assert.equal((await a.call('GET', '/usage')).body.plan.id, 'starter', 'browser supplied plan and price do not alter the server entitlement');
+  const user = await db.collection('users').findOne({ email: 'entitlements-starter@example.com' });
+  const periodId = `${String(user.businessId)}:${new Date().toISOString().slice(0, 7)}`;
+  await db.collection('usagePeriods').updateOne({ _id: periodId }, { $set: { 'counters.financialRecords': 249 } });
+  const today = (await a.call('GET', '/financial-setup')).body.today;
+  const body = { date: today, description: 'Quota boundary record', amount: '1.00', type: 'expense' };
+  const results = await Promise.all(Array.from({ length: 6 }, () => a.call('POST', '/transactions', body)));
+  assert.equal(results.filter((result) => result.status === 201).length, 1);
+  assert.equal(results.filter((result) => result.status === 429).length, 5);
+  assert.equal((await a.call('GET', '/usage')).body.usage.financialRecords.used, 250);
+  assert.equal((await a.call('GET', '/horizon')).body.forecasts.base.length, 30);
+  const starterCashFlow = await a.call('GET', '/cashflow');
+  const horizonEnd = new Date(`${today}T00:00:00Z`); horizonEnd.setUTCDate(horizonEnd.getUTCDate() + 30);
+  assert.ok(starterCashFlow.body.weeks.every((week) => week.end <= horizonEnd.toISOString().slice(0, 10)));
+  assert.ok(starterCashFlow.body.weeks.flatMap((week) => week.items).every((item) => item.date <= horizonEnd.toISOString().slice(0, 10)));
+  assert.equal((await a.call('GET', '/horizon?days=90')).status, 403);
+  const startDate = today;
+  const scenario = { name: 'Boundary', assumptions: [{ type: 'large-purchase', name: 'Purchase', startDate, amountCents: 100, cadence: 'once' }] };
+  assert.equal((await a.call('POST', '/horizon/scenarios', scenario)).status, 201);
+  assert.equal((await a.call('POST', '/horizon/scenarios', scenario)).status, 429);
+  assert.equal((await a.call('GET', '/usage')).body.capabilities.scenariosPerWorkspace.used, 1);
+});
+
+test('Morgan Intelligence monthly cap is atomic and failed provider calls release their reservation', async () => {
+  const a = agent(); await reg(a, 'entitlements-ai@example.com');
+  const user = await db.collection('users').findOne({ email: 'entitlements-ai@example.com' });
+  const periodId = `${String(user.businessId)}:${new Date().toISOString().slice(0, 7)}`;
+  await db.collection('usagePeriods').updateOne({ _id: periodId }, { $set: { 'counters.intelligenceRequests': 9 } });
+  geminiStatus = 503;
+  const failed = await a.call('POST', '/gemini/ask', { question: 'Will fail', requestId: 'failed-request-0001' });
+  assert.equal(failed.status, 502);
+  assert.equal((await a.call('GET', '/usage')).body.usage.intelligenceRequests.used, 9);
+  geminiStatus = 200;
+  const requests = await Promise.all(Array.from({ length: 5 }, (_, index) => a.call('POST', '/gemini/ask', { question: `Concurrent question ${index}`, requestId: `concurrent-request-${String(index).padStart(4, '0')}` })));
+  assert.equal(requests.filter((result) => result.status === 200).length, 1);
+  assert.equal(requests.filter((result) => result.status === 429).length, 4);
+  const successfulIndex = requests.findIndex((result) => result.status === 200);
+  const requestId = `concurrent-request-${String(successfulIndex).padStart(4, '0')}`;
+  const providerCalls = geminiRequests.length;
+  assert.equal((await a.call('POST', '/gemini/ask', { question: `Concurrent question ${successfulIndex}`, requestId })).status, 200);
+  assert.equal(geminiRequests.length, providerCalls, 'replaying the same completed request returns its stored answer without another provider call');
+  assert.equal((await a.call('GET', '/usage')).body.usage.intelligenceRequests.used, 10);
+});
+
+test('PDF report allowance counts successful generations and releases failed generations', async () => {
+  const a = agent(); await reg(a, 'entitlements-pdf@example.com');
+  assert.equal((await a.call('GET', '/reports/pdf?year=9999')).status, 400);
+  assert.equal((await a.call('GET', '/usage')).body.usage.pdfReports.used, 0);
+  assert.equal((await a.call('GET', '/reports/pdf?year=2026')).status, 200);
+  assert.equal((await a.call('GET', '/reports/pdf?year=2026')).status, 200);
+  assert.equal((await a.call('GET', '/reports/pdf?year=2026')).status, 429);
+  assert.equal((await a.call('GET', '/usage')).body.usage.pdfReports.used, 2);
+});
+
+test('Monitor shows forecast reserve pressure from the saved cash balance and configured reserve', async () => {
+  const a = agent(); await reg(a, 'monitor-pressure@example.com');
+  const saved = await a.call('PATCH', '/financial-setup', { minimumCashCents: 1000000 });
+  assert.equal(saved.status, 200);
+  const response = await a.call('GET', '/insights');
+  assert.equal(response.status, 200);
+  const alert = response.body.insights.find((item) => item.kind === 'cash-shortage');
+  assert.ok(alert);
+  assert.match(alert.detail, /estimate/);
+});
+
+test('Gemini receives tenant financial context, retains follow-up context, and fails clearly; PDF report uses stored records', async () => {
+  const a = agent(); await reg(a, 'horizon-ai@example.com');
+  const today = (await a.call('GET', '/financial-setup')).body.today;
+  await a.call('POST', '/transactions', { date: today, description: 'Confirmed design retainer receipt', vendor: 'Northwind', category: 'Client income', amount: '750.25', type: 'income' });
+  geminiPayload = { answer: 'The retainer receipt is in the recent recorded activity.', citations: [{ recordId: 'source-1', label: 'Retainer' }], recommendations: ['Compare future expected receipts with invoice due dates.'], unsupported: false };
+  geminiStatus = 200;
+  const first = await a.call('POST', '/gemini/ask', { question: 'What happened to cash today?' });
+  assert.equal(first.status, 200); assert.equal(first.body.citations.length, 1); assert.ok(first.body.threadId);
+  const firstPrompt = geminiRequests.at(-1).body.contents[0].parts[0].text;
+  assert.match(firstPrompt, /Confirmed design retainer receipt/); assert.match(firstPrompt, /recordedCash/); assert.doesNotMatch(firstPrompt, /cashBalanceCents/);
+  const followup = await a.call('POST', '/gemini/ask', { question: 'How does that compare with the forecast?', threadId: first.body.threadId });
+  assert.equal(followup.status, 200);
+  assert.match(geminiRequests.at(-1).body.contents[0].parts[0].text, /What happened to cash today\?/);
+  const aiUser = await db.collection('users').findOne({ email: 'horizon-ai@example.com' });
+  assert.equal(await db.collection('geminiThreads').countDocuments({ businessId: aiUser.businessId }), 1);
+  geminiStatus = 429;
+  assert.equal((await a.call('POST', '/gemini/ask', { question: 'Try again' })).status, 429);
+  geminiStatus = 200;
+  const report = await a.call('GET', '/reports/pdf?year=2026');
+  assert.equal(report.status, 200); assert.equal(report.headers.get('content-type'), 'application/pdf');
+  assert.equal(report.body.subarray(0, 5).toString(), '%PDF-');
+  assert.match(report.body.toString('latin1'), /FINANCIAL REPORT/);
+  assert.match(report.body.toString('latin1'), /Client income/);
+  assert.match(report.body.toString('latin1'), /750\.25/);
+  const b = agent(); await reg(b, 'horizon-pdf-other@example.com');
+  assert.doesNotMatch((await b.call('GET', '/reports/pdf?year=2026')).body.toString('latin1'), /750\.25/);
+});
+
+test('public contact form is gated by configuration, rate-limited, and sends plain text to the configured inbox', async () => {
+  const previousRecipient = process.env.MORGAN_CONTACT_EMAIL;
+  const a = agent();
+  try {
+    delete process.env.MORGAN_CONTACT_EMAIL;
+    assert.deepEqual((await a.call('GET', '/contact/status')).body, { available: false });
+    assert.equal((await a.call('POST', '/contact', { name: 'Sample Visitor', email: 'visitor@example.test', topic: 'Other', message: 'A sufficiently long contact message.' })).status, 503);
+    assert.equal((await a.call('POST', '/contact', { website: 'automated-bot' })).status, 200);
+    process.env.MORGAN_CONTACT_EMAIL = 'contact@example.test';
+    assert.deepEqual((await a.call('GET', '/contact/status')).body, { available: true });
+    const sent = await a.call('POST', '/contact', { name: 'Sample Visitor', email: 'visitor@example.test', topic: 'Product question', message: 'Please tell me more about Horizon.' });
+    assert.equal(sent.status, 202);
+    const message = resendRequests.at(-1);
+    assert.deepEqual(message.to, ['contact@example.test']);
+    assert.equal(message.reply_to, 'visitor@example.test');
+    assert.match(message.text, /Please tell me more about Horizon/);
+    assert.equal(message.html, undefined);
+  } finally {
+    if (previousRecipient === undefined) delete process.env.MORGAN_CONTACT_EMAIL;
+    else process.env.MORGAN_CONTACT_EMAIL = previousRecipient;
+  }
+});
+
 test('business data is strictly isolated between accounts', async () => {
   const a = agent(), b = agent();
   await reg(a, 'carol@example.com');
@@ -544,7 +698,7 @@ test('bills, overview and analytics use persisted data', async () => {
   assert.equal(sp.body.byCategory[0].name, 'Rent');
   const cf = await a.call('GET', '/cashflow');
   assert.equal(cf.body.opening, ov2.body.cash);
-  assert.equal(cf.body.weeks.length, 13);
+  assert.equal(cf.body.weeks.length, 5, 'Starter cash-flow forecast stops within its 30-day allowance');
 });
 
 test('password change signs out other sessions; account deletion removes data', async () => {
@@ -650,7 +804,7 @@ test('financial setup, expected schedules, forecast edits and business isolation
   const forecast = await a.call('GET', '/cashflow');
   const scheduled = forecast.body.weeks.flatMap((w) => w.items).filter((i) => i.type === 'planned');
   const subRows = scheduled.filter((i) => i.id === monthly.body.id);
-  assert.ok(subRows.length >= 3, 'monthly recurrence is generated inside the 13 week horizon');
+  assert.ok(subRows.length >= 1, 'monthly recurrence remains visible inside the 30-day Starter horizon');
   const spendPlan = await a.call('GET', '/spending');
   assert.equal(spendPlan.body.plannedRecurring.find((i) => i.id === monthly.body.id).monthlyEstimateCents, 20000, 'planned recurring costs appear separately in Spending');
   assert.equal(scheduled.find((i) => i.id === oneTime.body.id).amountCents, -50000);
@@ -664,7 +818,7 @@ test('financial setup, expected schedules, forecast edits and business isolation
   const overview = await a.call('GET', '/overview');
   assert.equal(overview.body.cash, 1200000);
   assert.equal(overview.body.financialPlan.monthlyBudgetCents, 100000);
-  assert.equal(overview.body.financialPlan.forecast.days90, 1200000 - 3 * 25000 - 50000);
+  assert.equal(overview.body.financialPlan.forecast.days90, null, 'Starter dashboard does not expose a 90-day forecast');
   assert.deepEqual((await other.call('GET', '/planning-items')).body, []);
   assert.equal((await other.call('PATCH', `/planning-items/${monthly.body.id}`, { name: 'x', type: 'expense', category: 'x', amountCents: 1, cadence: 'once', nextDate: today })).status, 404);
   assert.equal((await a.call('DELETE', `/planning-items/${oneTime.body.id}`)).status, 200);

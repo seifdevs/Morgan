@@ -213,7 +213,7 @@ export function Paper(p: {
       <table>
         <thead><tr><th>Description</th><th className="r">Qty</th><th className="r">Unit</th><th className="r">Amount</th></tr></thead>
         <tbody>{p.items.map((it, i) => (
-          <tr key={i}><td>{it.description || <span style={{ color: '#a9a294' }}>Item description</span>}</td><td className="r">{it.quantity}</td><td className="r">{money(it.unitCents)}</td><td className="r">{money(lineTotalCents(it.quantity, it.unitCents))}</td></tr>
+          <tr key={i}><td>{it.description || <span style={{ color: '#8d98a5' }}>Item description</span>}</td><td className="r">{it.quantity}</td><td className="r">{money(it.unitCents)}</td><td className="r">{money(lineTotalCents(it.quantity, it.unitCents))}</td></tr>
         ))}</tbody>
       </table>
       <div className="paper-totals">

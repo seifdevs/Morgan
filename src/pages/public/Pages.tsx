@@ -1,9 +1,10 @@
 import { Link, Navigate, useParams } from 'react-router-dom';
+import { useEffect, useState } from 'react';
 import { Icon } from '../../components/ui';
-import { CashFlowRiver, InvoiceFlow, SpendingLens } from '../../components/illustrations/Illustrations';
 import { useDocumentTitle } from '../../lib/hooks';
 import { faqs, guides } from './content';
-import founderSvg from '../../assets/founder.svg?raw';
+import { HorizonShowcase, IntelligenceShowcase, PillarVisual, ReportShowcase } from '../../components/MarketingExperience';
+import planCatalog from '../../../shared/plans.json';
 
 function PageIntro({ eyebrow, title, lead }: { eyebrow: string; title: React.ReactNode; lead: React.ReactNode }) {
   return (
@@ -14,71 +15,37 @@ function PageIntro({ eyebrow, title, lead }: { eyebrow: string; title: React.Rea
   );
 }
 
-const modules = [
-  { id: 'spending', icon: 'pie', title: 'Spending analysis', lead: 'Know exactly where money goes.', points: ['Search and filter every transaction by date, vendor, category and type', 'Category and vendor breakdowns compared with the previous period', 'Cumulative spend curve: this period against last', 'Drill from any breakdown straight into the transactions behind it'], art: <SpendingLens /> },
-  { id: 'invoicing', icon: 'document', title: 'Invoicing & billing', lead: 'Invoices that add up — to the cent.', points: ['Line items with quantities, discounts and tax in integer-cent math', 'Live paper-style preview while you edit', 'PDF export; email delivery when an email provider is configured', 'Record full or partial payments, which flow into your cash records'], art: <InvoiceFlow /> },
-  { id: 'cashflow', icon: 'trend', title: 'Cash-flow planning', lead: 'Look ahead with assumptions you can inspect.', points: ['13-week projection from open invoices and unpaid bills by due date', 'Optional run-rate from your recent recorded activity', 'Simple what-if adjustments that never overwrite your records', 'Recorded and estimated figures are always visually distinct'], art: <CashFlowRiver /> },
-];
-
 export function Features() {
-  useDocumentTitle('Financial management features for agencies', 'Explore Morgan workflows for agency spending analysis, invoices, bills, receivables, reports and cash-flow estimates.', { canonicalPath: '/features' });
+  useDocumentTitle('Morgan product overview', 'See how Financial Core, Monitor, Horizon and Morgan Intelligence work together.', { canonicalPath: '/features' });
   return (
-    <div className="page">
-      <PageIntro eyebrow="The Morgan platform" title={<>Make the financial picture <span className="serif gold">easier to follow.</span></>} lead="Spending, invoices, receivables, bills and cash flow share one workspace — and every summary links back to the records behind it." />
-      <nav className="module-nav" aria-label="Modules">{modules.map((m, i) => <a key={m.id} href={`#${m.id}`}><span>0{i + 1}</span>{m.title}</a>)}</nav>
-      {modules.map((m, i) => (
-        <section key={m.id} id={m.id} className={`module ${i % 2 ? 'reverse' : ''}`}>
-          <div className="module-copy">
-            <span className="module-icon"><Icon name={m.icon} size={20} /></span>
-            <h2>{m.title}</h2>
-            <p className="module-lead">{m.lead}</p>
-            <ul className="ticks">{m.points.map((p) => <li key={p}>{p}</li>)}</ul>
-          </div>
-          <div className="module-art">{m.art}</div>
-        </section>
-      ))}
-      <section className="also">
-        <h2>Also in the workspace</h2>
-        <div className="also-grid">
-          <div><Icon name="receivable" /><h3>Receivables</h3><p>Aging buckets, overdue totals and the oldest invoices first.</p></div>
-          <div><Icon name="payable" /><h3>Bills</h3><p>Upcoming obligations; paying a bill records the expense automatically.</p></div>
-          <div><Icon name="spark" /><h3>Insights</h3><p>Duplicate charges, recurring costs and price increases — each with evidence.</p></div>
-          <div><Icon name="report" /><h3>Reports</h3><p>Monthly profit &amp; loss by category, exportable to CSV.</p></div>
-        </div>
-      </section>
-      <section className="cta-band"><h2>See it with <span className="serif gold">your numbers.</span></h2><Link className="btn primary lg" to="/signup">Create your free account <Icon name="upRight" size={15} className="arrow" /></Link></section>
+    <div className="page mx-product-page">
+      <PageIntro eyebrow="The Morgan product" title={<>Records, changes and outlooks — <span className="serif gold">connected.</span></>} lead="Morgan organizes information you provide, calculates a position from those records, surfaces changes to review, and helps explain the context." />
+      <div className="mx-product-index"><a href="#financial-core">01 Financial Core</a><a href="#monitor">02 Monitor</a><a href="#horizon">03 Horizon</a><a href="#intelligence">04 Morgan Intelligence</a><a href="#reports">05 Reports</a></div>
+      <section id="financial-core" className="mx-product-deep core-deep"><div className="mx-product-text"><span className="mx-kicker">01 / FINANCIAL CORE</span><h2>Start with a record you can trace.</h2><p>Add transactions, accounts, invoices and bills, or review an imported bank statement before confirming it. Morgan recalculates totals from the saved records and keeps business balances scoped to your workspace.</p><ul><li>Classify income, expenses and transfers</li><li>Track receivables, payables and recorded payments</li><li>See the record behind a summary or total</li></ul><p className="mx-note">Morgan does not connect to bank accounts or verify statement payments.</p></div><PillarVisual type="core" /></section>
+      <section id="monitor" className="mx-product-deep monitor-deep"><div className="mx-product-text"><span className="mx-kicker">02 / MONITOR</span><h2>Review the signal and its source.</h2><p>Monitor groups overdue items, possible duplicates, recurring cost changes and other review signals with references to the records that caused them. A signal is a prompt to inspect the evidence, not a conclusion about what happened.</p></div><PillarVisual type="monitor" /></section>
+      <div id="horizon" className="mx-product-embedded"><HorizonShowcase /></div>
+      <div id="intelligence" className="mx-product-embedded"><IntelligenceShowcase /></div>
+      <div id="reports" className="mx-product-embedded"><ReportShowcase /></div>
+      <section className="mx-product-use"><div><span className="mx-kicker">WORKFLOWS / PRACTICAL USE</span><h2>Use Morgan where timing matters.</h2></div><div className="mx-use-lines"><article><b>Client payment is late</b><p>Review the invoice and its saved date, then see how a delay changes the cash estimate.</p></article><article><b>Costs are rising</b><p>Compare recurring transactions and open the entries behind a potential change.</p></article><article><b>You are considering a hire</b><p>Add a planned expense to a scenario and compare possible future cash positions.</p></article></div></section>
+      <section className="cta-band"><h2>See your records <span className="serif gold">in one picture.</span></h2><Link className="btn primary lg" to="/signup">Start with Starter <Icon name="upRight" size={15} /></Link><Link className="mx-text-link" to="/pricing">Review pricing <Icon name="arrowRight" size={15}/></Link></section>
     </div>
   );
 }
 
 export function Pricing() {
-  useDocumentTitle('Pricing', 'Morgan is free to use today. Review planned Pro and Business monthly prices and what is currently available.');
-  const plans = [
-    { id: 'free', name: 'Free', price: '$0', state: 'Available now', summary: 'Start organizing the finances already in your records.', action: 'Create free account', to: '/signup', featured: false },
-    { id: 'pro', name: 'Pro', price: '$49.99', state: 'Planned price', summary: 'A proposed paid tier for businesses reviewing their finances regularly.', action: 'Explore current access', to: '#current-access', featured: true },
-    { id: 'business', name: 'Business', price: '$199.99', state: 'Planned price', summary: 'A proposed tier for businesses with broader financial oversight needs.', action: 'Explore current access', to: '#current-access', featured: false },
-  ];
+  const [annual, setAnnual] = useState(false);
+  useDocumentTitle('Pricing', 'Compare Morgan Starter, Pro and Max monthly and annual prices, with current billing availability stated clearly.');
+  const plans = Object.values(planCatalog).map((plan) => ({ ...plan, monthly: plan.monthlyCents ? `$${(plan.monthlyCents / 100).toFixed(2)}` : 'Free', annual: plan.annualCents ? `$${(plan.annualCents / 100).toLocaleString('en-US', { maximumFractionDigits: 0 })}` : 'Free', savings: plan.monthlyCents ? `$${((plan.monthlyCents * 12 - plan.annualCents) / 100).toFixed(2)}` : undefined, status: plan.id === 'starter' ? 'Available' : 'Checkout not active', summary: plan.id === 'starter' ? 'Organize the financial information already in your records.' : plan.id === 'pro' ? 'A regular connected view of recorded finances, changes and outlooks.' : 'A broader view for teams that need to review records, monitoring and planning together.' }));
   return (
-    <div className="page">
-      <PageIntro eyebrow="Plans & pricing" title={<>Straightforward pricing. <span className="serif gold">Transparent status.</span></>} lead="Morgan is free to use today. Pro is planned at $49.99 per month and Business at $199.99 per month; paid billing is not active yet." />
-      <div className="plans pricing-plans">
-        {plans.map((plan) => (
-          <article className={`plan ${plan.featured ? 'pro' : ''}`} id={plan.id} key={plan.id}>
-            <div className="plan-top"><h2>{plan.name}</h2><span className={`badge ${plan.id === 'free' ? 'available' : 'estimate'}`}>{plan.state}</span></div>
-            <div className="plan-price"><span className="num">{plan.price}</span><small>/ month</small></div>
-            <p>{plan.summary}</p>
-            <ul className="ticks">
-              {plan.id === 'free' ? <><li>Transactions, CSV import and spending analysis</li><li>Invoices, PDF export and payment tracking</li><li>Receivables, bills, reports and cash estimates</li></> : <><li>Current workspace features remain available</li><li>No paid access or plan-specific features are active</li><li>No charge is made when you create an account</li></>}
-            </ul>
-            <Link className={`btn ${plan.featured ? 'primary' : 'outline'}`} to={plan.to}>{plan.action}</Link>
-          </article>
-        ))}
-      </div>
-      <section id="current-access" className="pricing-current panel">
-        <div><span className="eyebrow gold">What is available today</span><h2>One complete workspace, free to start.</h2><p>Morgan currently provides the same available product features to every account. Pro and Business prices are planned, but there is no checkout, subscription, usage limit or feature gate tied to those plans today.</p></div>
-        <ul className="ticks"><li>Track transactions with CSV import and spending analysis</li><li>Create invoices, export PDFs and record payments</li><li>Review receivables, bills and monthly reports</li><li>Explore a 13-week cash estimate and scenarios</li></ul>
-        <p className="fine">Morgan works alongside accounting software and professional advice. Cash projections are estimates based on recorded activity and stated assumptions.</p>
+    <div className="page mx-pricing-page">
+      <PageIntro eyebrow="Plans & pricing" title={<>Choose the level of <span className="serif gold">financial clarity you need.</span></>} lead="Starter is free and its limits are active. Pro and Max prices and allowances are published below; paid checkout and activation are not configured yet." />
+      <section id="paid-plans" className="mx-full-pricing">
+        <div className="mx-pricing-bar"><span>USD · {annual ? 'BILLED ANNUALLY' : 'BILLED MONTHLY'}</span><div className="mx-billing-toggle" role="group" aria-label="Billing frequency"><button type="button" aria-pressed={!annual} onClick={() => setAnnual(false)}>Monthly</button><button type="button" aria-pressed={annual} onClick={() => setAnnual(true)}>Annual</button></div></div>
+        <div className="mx-plan-layout">{plans.map((plan, i) => <article className={`mx-plan mx-plan-${plan.id}`} key={plan.id}><div className="mx-plan-top"><span>0{i + 1} / PLAN</span><h3>{plan.name}</h3><small className="mx-plan-status">{plan.status}</small></div><div className="mx-plan-price"><b key={annual ? 'annual' : 'monthly'}>{annual ? plan.annual : plan.monthly}</b><span>{plan.id === 'starter' ? 'always free' : annual ? 'per year' : 'per month'}</span></div><small key={annual ? 'annual-note' : 'monthly-note'} className="mx-plan-note">{plan.id === 'starter' ? 'No trial or payment details' : annual ? `Save ${plan.savings} vs. 12 monthly payments` : 'Seven-day trial planned; billing is not active'}</small><p>{plan.summary}</p><div className="mx-entitlement-note"><b>Plan allowances</b><ul><li>{plan.limits.workspaces} business workspace{plan.limits.workspaces === 1 ? '' : 's'} · {plan.limits.seats} seat{plan.limits.seats === 1 ? '' : 's'}</li><li>{plan.limits.financialRecords.toLocaleString()} new financial records per month</li><li>{plan.limits.forecastDays}-day Horizon · {plan.limits.scenariosPerWorkspace} saved scenarios</li><li>{plan.limits.intelligenceRequests} Morgan Intelligence responses per month</li><li>{plan.limits.pdfReports} generated PDF reports per month</li><li>Monitor: {plan.monitor === 'core' ? 'core functionality' : 'full functionality'}</li></ul><small>{plan.id === 'starter' ? 'Starter limits are active for every account.' : 'Paid plan limits are published; checkout and paid activation are not available yet.'}</small></div>{plan.id === 'starter' ? <Link className="mx-button mx-button-dark" to="/signup">Start free <Icon name="upRight" size={15}/></Link> : <span className="mx-unavailable">Paid signup is not available</span>}</article>)}</div>
       </section>
+      <section className="mx-trial-note"><span className="mx-kicker">TRIALS / BILLING STATUS</span><p>Starter is free and has no trial. Seven-day Pro and Max trials are planned, but Morgan has no payment processor or verified subscription configuration active, so paid trials and checkout are not available.</p></section>
+      <section className="mx-pricing-faq"><span className="mx-kicker">BILLING QUESTIONS</span><details><summary>When will Pro or Max be available?</summary><p>Paid checkout is not active yet. Creating a Starter account will not start a paid subscription or request payment details.</p></details><details><summary>How much do annual plans save?</summary><p>Pro costs $499 per year instead of $599.88 across 12 monthly payments, a $100.88 difference. Max costs $1,499 instead of $2,399.88 across 12 monthly payments, a $900.88 difference.</p></details><details><summary>How do cancellations work?</summary><p>There is no paid subscription to cancel today. Subscription management will be described here when billing is configured.</p></details></section>
+      <section className="cta-band"><h2>Start with <span className="serif gold">Starter, free.</span></h2><Link className="btn primary lg" to="/signup">Create your account <Icon name="upRight" size={15}/></Link></section>
     </div>
   );
 }
@@ -86,32 +53,27 @@ export function Pricing() {
 export function About() {
   useDocumentTitle('About Morgan', 'Learn why founder Seif is building Morgan as a practical financial management and insight layer for small and growing businesses.');
   return (
-    <div className="page">
-      <PageIntro eyebrow="About Morgan" title={<>Make business finances <span className="serif gold">make more sense.</span></>} lead="Morgan exists to help business owners see their financial position more clearly and understand the information behind the decisions they make." />
-      <section className="about-vision">
-        <h2>Clarity should come with context.</h2>
-        <p>Small and growing businesses work with a steady flow of invoices, expenses, payment dates and open questions. Morgan brings those records into an understandable view — so people can make informed decisions with their own business context in hand. It is designed as a complementary layer alongside accounting software and professional advice.</p>
-      </section>
-      <section className="founder about-founder">
-        <div className="founder-art"><div className="founder-portrait" dangerouslySetInnerHTML={{ __html: founderSvg }} /></div>
-        <div className="founder-copy">
-          <div className="eyebrow gold">Founder · Seif</div>
-          <h2>Clarity without shortcuts.</h2>
-          <p>Seif is building Morgan around an unusually clear ambition: make the financial picture easier to understand, without hiding the details that matter. Morgan reflects his conviction that business owners deserve more than a pile of disconnected figures.</p>
-          <p>His standard is refreshingly direct: confidence without overstatement, and thoughtful design in service of the person running the business.</p>
-        </div>
-      </section>
+    <div className="page mx-about-page">
+      <PageIntro eyebrow="About Morgan / The idea" title={<>Make business finances <span className="serif gold">make more sense.</span></>} lead="Morgan is being built to help business owners see their financial position more clearly and understand the information behind their next decisions." />
+      <section className="mx-about-opening"><span className="mx-kicker">THE PROBLEM / FRAGMENTED INFORMATION</span><h2>Business finances live across different records, dates and conversations.</h2><p>An invoice shows what is owed. A transaction shows what moved. A bill shows what is coming due. Looking at any one record on its own leaves the wider picture incomplete.</p></section>
+      <section className="mx-about-philosophy"><div><span className="mx-kicker">PRODUCT PHILOSOPHY</span><h2>Keep the detail close.<br/><em>Make the view clearer.</em></h2></div><div><p>Morgan brings records into a workspace where activity can be reviewed, changes can be traced back to evidence, and cash estimates can be explored through visible assumptions.</p><p>Financial calculations are made by the application from stored data. Morgan Intelligence can explain that context, but AI does not create or change the underlying financial records.</p></div></section>
+      <section className="mx-about-principles"><span className="mx-kicker">WHAT GUIDES THE PRODUCT</span><div><article><b>01</b><h3>Traceable</h3><p>Summaries should lead back to the records that support them.</p></article><article><b>02</b><h3>Explicit</h3><p>Recorded values and future estimates should look and read differently.</p></article><article><b>03</b><h3>Useful</h3><p>Show the context a business owner needs to review, not noise for its own sake.</p></article><article><b>04</b><h3>Complementary</h3><p>Work alongside accounting software and professional advice.</p></article></div></section>
+      <section className="mx-about-close"><p>Clarity without shortcuts.<br/><em>Confidence without overstatement.</em></p><Link className="mx-button mx-button-dark" to="/signup">Explore Morgan <Icon name="upRight" size={15}/></Link></section>
     </div>
   );
 }
 
 export function Resources() {
   useDocumentTitle('Financial management resources for agencies', 'Practical guides to agency cash position, receivables aging, cash-flow assumptions, document review and monthly financial reviews.');
+  const [category, setCategory] = useState('All field notes');
+  const categories = ['All field notes', 'Cash & planning', 'Records & review'];
+  const visibleGuides = guides.filter((g) => category === 'All field notes' || (category === 'Cash & planning' ? ['cash-position', 'forecast-assumptions', 'business-planning'].includes(g.slug) : ['receivables-aging', 'document-review', 'monthly-review'].includes(g.slug)));
   return (
-    <div className="page">
-      <PageIntro eyebrow="Morgan field notes" title={<>Useful context for the <span className="serif gold">numbers behind your business.</span></>} lead="Practical guides to cash, obligations, records and estimates. General information, not accounting or financial advice." />
+    <div className="page mx-resources-page">
+      <PageIntro eyebrow="Resources / Field notes" title={<>Useful context for the <span className="serif gold">numbers behind your business.</span></>} lead="Practical guides to cash, obligations, records and estimates. General information, not accounting or financial advice." />
+      <nav className="mx-resource-cats" aria-label="Resource categories">{categories.map((c) => <button type="button" key={c} aria-pressed={category === c} onClick={() => setCategory(c)}>{c}</button>)}</nav>
       <ol className="guide-list">
-        {guides.map((g, i) => (
+        {visibleGuides.map((g, i) => (
           <li key={g.slug}>
             <Link to={`/resources/${g.slug}`}>
               <span className="gl-n num">0{i + 1}</span>
@@ -166,20 +128,45 @@ export function Faq() {
 
 export function Contact() {
   useDocumentTitle('Contact Morgan', 'Contact information for Morgan product questions and feedback.', { indexable: false });
+  const [available, setAvailable] = useState(false);
+  const [checking, setChecking] = useState(true);
+  const [sending, setSending] = useState(false);
+  const [feedback, setFeedback] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+  useEffect(() => {
+    let active = true;
+    fetch('/api/contact/status').then((r) => r.json()).then((r) => { if (active) setAvailable(r.available === true); }).catch(() => { if (active) setAvailable(false); }).finally(() => { if (active) setChecking(false); });
+    return () => { active = false; };
+  }, []);
+  async function submit(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const formElement = event.currentTarget;
+    setFeedback(null);
+    setSending(true);
+    const form = new FormData(formElement);
+    try {
+      const response = await fetch('/api/contact', { method: 'POST', headers: { 'Content-Type': 'application/json', 'x-morgan-csrf': '1' }, body: JSON.stringify({ name: form.get('name'), email: form.get('email'), topic: form.get('topic'), message: form.get('message'), website: form.get('website') }) });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || result.message || 'Morgan could not send your message. Try again later.');
+      setFeedback({ type: 'success', text: 'Your message was accepted. The team can reply to the email address you provided.' });
+      formElement.reset();
+    } catch (error) {
+      setFeedback({ type: 'error', text: error instanceof Error ? error.message : 'Morgan could not send your message. Try again later.' });
+    } finally { setSending(false); }
+  }
   return (
-    <div className="page narrow">
-      <PageIntro eyebrow="Contact" title={<>Get in touch <span className="serif gold">with Morgan.</span></>} lead="For product questions, partnerships or feedback, use the Morgan contact channel that was shared with you directly." />
-      <div className="panel contact-panel">
-        <Icon name="mail" size={22} />
-        <div>
-          <h2>No public contact address is configured yet</h2>
-          <p className="muted">We haven’t added a message form because there is no monitored inbox to deliver it to — we’d rather not collect messages nobody reads.</p>
-        </div>
-      </div>
-      <div className="contact-links">
-        <Link className="btn outline" to="/faq">Visit the FAQ</Link>
-        <Link className="btn outline" to="/resources">Browse guides</Link>
-      </div>
+    <div className="page mx-contact-page">
+      <PageIntro eyebrow="Contact / Start a conversation" title={<>Get in touch <span className="serif gold">with Morgan.</span></>} lead="Product questions, technical support, partnerships or feedback. Messages are routed to the Morgan contact inbox when it is configured." />
+      <section className="mx-contact-layout"><div className="mx-contact-context"><span className="mx-kicker">HOW TO REACH US</span><h2>Tell us what you need.</h2><p>Choose a topic and include the context that will help us understand your message. Do not include passwords, bank credentials or full payment information.</p><div className="mx-contact-reassure"><span>01</span><p>Messages use a monitored contact inbox configured by the Morgan team.</p></div><div className="mx-contact-reassure"><span>02</span><p>Your email is used to reply to this message.</p></div></div>
+        {checking ? <div className="mx-contact-unavailable" aria-live="polite">Checking contact availability…</div> : available ? <form className="mx-contact-form" onSubmit={submit}>
+          <div className="mx-contact-fields"><label>Name<input name="name" autoComplete="name" required maxLength={100} /></label><label>Email<input name="email" type="email" autoComplete="email" required maxLength={254} /></label></div>
+          <label>Topic<select name="topic" required defaultValue=""><option value="" disabled>Select a topic</option><option>Product question</option><option>Technical support</option><option>Partnership</option><option>Other</option></select></label>
+          <label>Message<textarea name="message" required minLength={10} maxLength={4000} rows={6} placeholder="How can we help?" /></label>
+          <label className="mx-honeypot" aria-hidden="true" tabIndex={-1}>Leave this field empty<input name="website" tabIndex={-1} autoComplete="off" /></label>
+          <p className="mx-contact-privacy">By sending this message, you ask Morgan to use your email to reply. Avoid sharing sensitive financial or account credentials.</p>
+          <button className="mx-button mx-button-primary" type="submit" disabled={sending}>{sending ? 'Sending…' : 'Send message'} <Icon name="upRight" size={15}/></button>
+          {feedback && <p className={`mx-contact-feedback ${feedback.type}`} role={feedback.type === 'error' ? 'alert' : 'status'}>{feedback.text}</p>}
+        </form> : <div className="mx-contact-unavailable"><Icon name="mail" size={20}/><div><h2>Contact form temporarily unavailable</h2><p>The team has not configured a monitored contact inbox yet. See the FAQ for product information, or try again later.</p><Link className="mx-text-link" to="/faq">Visit the FAQ <Icon name="arrowRight" size={14}/></Link></div></div>}
+      </section>
     </div>
   );
 }

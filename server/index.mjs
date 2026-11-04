@@ -48,10 +48,26 @@ export async function start({ uri = process.env.MONGODB_URI, dbName = process.en
 
   if (prod) {
     const dist = resolve(root, 'dist');
-    if (!existsSync(resolve(dist, 'index.html'))) throw new Error('dist/ not found. Run `npm run build` first.');
+    if (!existsSync(resolve(dist, 'index.html')) || !existsSync(resolve(dist, 'spa.html'))) throw new Error('dist/ not found or missing spa.html. Run `npm run build` first.');
     app.use('/assets', express.static(resolve(dist, 'assets'), { maxAge: '1y', immutable: true, fallthrough: false }));
     app.use(express.static(dist, { index: false, maxAge: '1h' }));
-    app.get('*', (_req, res) => res.setHeader('Cache-Control', 'no-cache').sendFile(resolve(dist, 'index.html')));
+    const publicDocuments = new Map([
+      ['/', 'index.html'], ['/features', 'seo-pages/features.html'], ['/product', 'seo-pages/features.html'], ['/pricing', 'seo-pages/pricing.html'],
+      ['/about', 'seo-pages/about.html'], ['/resources', 'seo-pages/resources.html'], ['/faq', 'seo-pages/faq.html'], ['/contact', 'seo-pages/contact.html'],
+      ['/agency-financial-management', 'seo-pages/agency-financial-management.html'], ['/agency-cash-flow', 'seo-pages/agency-cash-flow.html'],
+      ['/agency-profitability', 'seo-pages/agency-profitability.html'], ['/not-found', '404.html'],
+    ]);
+    app.get('*', (req, res) => {
+      let file = publicDocuments.get(req.path);
+      const resource = /^\/resources\/([a-z0-9-]+)$/.exec(req.path);
+      if (!file && resource) {
+        const candidate = resolve(dist, `seo-pages/resources-${resource[1]}.html`);
+        if (existsSync(candidate)) file = `seo-pages/resources-${resource[1]}.html`;
+      }
+      // Prerendered marketing pages keep their SEO markup. Private, auth and other
+      // client routes must start from the empty SPA shell before React hydrates.
+      res.setHeader('Cache-Control', 'no-cache').sendFile(resolve(dist, file || 'spa.html'));
+    });
   } else {
     const { createServer } = await import('vite');
     const vite = await createServer({ root, server: { middlewareMode: true }, appType: 'spa' });

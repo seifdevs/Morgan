@@ -1,0 +1,5 @@
+{
+  "starter": {"id":"starter","name":"Starter","monthlyCents":0,"annualCents":0,"limits":{"workspaces":1,"seats":1,"financialRecords":250,"forecastDays":30,"scenariosPerWorkspace":1,"intelligenceRequests":10,"pdfReports":2},"monitor":"core"},
+  "pro": {"id":"pro","name":"Pro","monthlyCents":4999,"annualCents":49900,"limits":{"workspaces":1,"seats":3,"financialRecords":3000,"forecastDays":90,"scenariosPerWorkspace":10,"intelligenceRequests":150,"pdfReports":20},"monitor":"core"},
+  "max": {"id":"max","name":"Max","monthlyCents":19999,"annualCents":149900,"limits":{"workspaces":5,"seats":10,"financialRecords":20000,"forecastDays":90,"scenariosPerWorkspace":50,"intelligenceRequests":600,"pdfReports":100},"monitor":"core"}
+}

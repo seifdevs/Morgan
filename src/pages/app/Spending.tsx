@@ -47,7 +47,7 @@ export default function Spending() {
                 labels={data.cumulative.map((c) => formatDay(addDaysISO(data.from, c.day)))}
                 series={[
                   { key: 'cur', label: 'This period', color: '#c9a86a', area: true, values: data.cumulative.map((c) => c.current) },
-                  { key: 'prior', label: `Prior (${formatDate(data.prior.from)} – ${formatDate(data.prior.to)})`, color: '#6b7a89', values: data.cumulative.map((c) => c.prior) },
+                  { key: 'prior', label: `Prior (${formatDate(data.prior.from)} – ${formatDate(data.prior.to)})`, color: '#8d98a5', values: data.cumulative.map((c) => c.prior) },
                 ]}
                 format={(v) => money(v, { compact: true })} />
             </ChartFrame>

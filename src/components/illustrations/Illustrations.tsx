@@ -67,7 +67,7 @@ export function HeroDashboard() {
             <text x="322" y="20" textAnchor="end" fill="#c9a86a" fontSize="10" letterSpacing="1">TODAY</text>
             <text x="338" y="20" fill="#8d98a5" fontSize="10" letterSpacing="1">ESTIMATE</text>
           </motion.g>
-          <g clipPath="url(#haPencil)"><path d={PENCIL} fill="none" stroke="#b9c1c7" strokeWidth="2" strokeDasharray="5 6" strokeLinecap="round" /></g>
+          <g clipPath="url(#haPencil)"><path d={PENCIL} fill="none" stroke="#8d98a5" strokeWidth="2" strokeDasharray="5 6" strokeLinecap="round" /></g>
           <motion.circle cx="330" cy="66" r="5" fill="#c9a86a" stroke="#121820" strokeWidth="3" initial={init ?? { scale: 0 }} animate={{ scale: 1 }} transition={{ delay: T.today, type: 'spring', stiffness: 420, damping: 18 }} style={{ transformBox: 'fill-box', transformOrigin: 'center' }} />
         </svg>
         {/* The invoice lives inside the ledger as a row; the PAID stamp lands on it and cash rises in the same beat. */}
@@ -102,14 +102,14 @@ export function CashFlowRiver() {
       <svg viewBox="0 0 640 290" preserveAspectRatio="xMidYMid meet">
         <defs>
           <linearGradient id="rvIn" x1="0" x2="1"><stop offset="0" stopColor="#c9a86a" stopOpacity=".15" /><stop offset="1" stopColor="#c9a86a" stopOpacity=".55" /></linearGradient>
-          <linearGradient id="rvOut" x1="0" x2="1"><stop offset="0" stopColor="#c9a86a" stopOpacity=".55" /><stop offset="1" stopColor="#5a6a79" stopOpacity=".35" /></linearGradient>
+          <linearGradient id="rvOut" x1="0" x2="1"><stop offset="0" stopColor="#c9a86a" stopOpacity=".55" /><stop offset="1" stopColor="#8d98a5" stopOpacity=".35" /></linearGradient>
         </defs>
         {sources.map((s, i) => {
           const d = `M120 ${s.y} C220 ${s.y} 230 145 320 145`;
           return (
             <g key={s.label}>
               <path d={d} stroke="url(#rvIn)" strokeWidth={s.w} fill="none" className="rv-band" />
-              <path d={d} stroke="#f4e3bd" strokeWidth="1.6" fill="none" strokeDasharray="2 14" className="rv-flow" style={{ animationDelay: `${i * -0.7}s` }} />
+              <path d={d} stroke="#c9a86a" strokeWidth="1.6" fill="none" strokeDasharray="2 14" className="rv-flow" style={{ animationDelay: `${i * -0.7}s` }} />
               <text x="110" y={s.y + 4} textAnchor="end" className="rv-label">{s.label}</text>
             </g>
           );
@@ -119,7 +119,7 @@ export function CashFlowRiver() {
           return (
             <g key={s.label}>
               <path d={d} stroke="url(#rvOut)" strokeWidth={s.w} fill="none" className="rv-band" />
-              <path d={d} stroke="#f4e3bd" strokeWidth="1.6" fill="none" strokeDasharray="2 14" className="rv-flow" style={{ animationDelay: `${i * -0.5}s` }} />
+              <path d={d} stroke="#c9a86a" strokeWidth="1.6" fill="none" strokeDasharray="2 14" className="rv-flow" style={{ animationDelay: `${i * -0.5}s` }} />
               <text x="530" y={s.y + 4} className="rv-label">{s.label}</text>
             </g>
           );

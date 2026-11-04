@@ -4,21 +4,11 @@ import { Icon, Marker, Wordmark, useToast } from '../../components/ui';
 import { useAuth } from '../../lib/auth';
 
 const nav: { group?: string; items: { to: string; label: string; icon: string; end?: boolean }[] }[] = [
-  { items: [{ to: '/app', label: 'Overview', icon: 'overview', end: true }] },
-  { group: 'Money', items: [
-    { to: '/app/transactions', label: 'Transactions', icon: 'transfer' },
-    { to: '/app/invoices', label: 'Invoices', icon: 'document' },
-    { to: '/app/receivables', label: 'Receivables', icon: 'receivable' },
-    { to: '/app/bills', label: 'Bills', icon: 'payable' },
-    { to: '/app/customers', label: 'Customers', icon: 'users' },
-  ] },
-  { group: 'Insights', items: [
-    { to: '/app/spending', label: 'Spending', icon: 'pie' },
-    { to: '/app/cashflow', label: 'Cash flow', icon: 'trend' },
-    { to: '/app/reports', label: 'Reports', icon: 'report' },
-    { to: '/app/insights', label: 'Cost insights', icon: 'spark' },
-  ] },
-  { group: 'Settings', items: [{ to: '/app/bank-accounts', label: 'Bank accounts', icon: 'cash' }] },
+  { items: [{ to: '/app', label: 'Dashboard', icon: 'overview', end: true }] },
+  { items: [{ to: '/app/financial-core', label: 'Financial Core', icon: 'transfer' }] },
+  { items: [{ to: '/app/monitor', label: 'Monitor', icon: 'alert' }] },
+  { items: [{ to: '/app/horizon', label: 'Horizon', icon: 'trend' }] },
+  { items: [{ to: '/app/reports', label: 'Reports', icon: 'report' }] },
 ];
 
 /** Legacy /logout URL: ends the session server-side, then returns to the login screen. */
@@ -82,6 +72,7 @@ function AppLayout() {
         <div className="sb-foot">
           {user?.role === 'admin' && <NavLink to="/admin"><Icon name="settings" size={17} /><span>Admin</span></NavLink>}
           <NavLink to="/app/settings">{({ isActive }) => <>{isActive && <Marker id="sb-marker" className="sb-marker" />}<Icon name="settings" size={17} /><span>Settings</span></>}</NavLink>
+          <NavLink to="/app/usage">{({ isActive }) => <>{isActive && <Marker id="sb-marker" className="sb-marker" />}<Icon name="report" size={17} /><span>Plan & usage</span></>}</NavLink>
           <button onClick={signOut}><Icon name="logout" size={17} /><span>Log out</span></button>
         </div>
       </aside>

@@ -131,7 +131,7 @@ export function Receivables() {
             </section>
             <div className="stack">
               <section className="panel"><div className="panel-head"><h2>Aging</h2></div><div className="panel-body">
-                <StackBar format={money} parts={ov.data.aging.map((a, i) => ({ label: a.label, amount: a.amount, count: a.count, color: ['#2f9b70', '#d6a84f', '#c98a4f', '#c66d5d', '#a04848'][i] }))} />
+                <StackBar format={money} parts={ov.data.aging.map((a, i) => ({ label: a.label, amount: a.amount, count: a.count, color: ['#2f9b70', '#d6a84f', '#d6a84f', '#c65d5d', '#c65d5d'][i] }))} />
               </div></section>
               <section className="panel"><div className="panel-head"><h2>By customer</h2></div><div style={{ paddingTop: 10 }}>
                 <ul className="list">{byCustomer.map((c) => (

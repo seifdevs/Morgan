@@ -145,7 +145,7 @@ export function LedgerHero() {
         <p className="lh-lead">Spending, invoices, receivables, bills and cash flow in one calm workspace — every figure traceable to the record behind it.</p>
         <p className="lh-key" aria-hidden="true">
           <span><svg width="28" height="6"><line x1="1" y1="3" x2="27" y2="3" stroke="#c9a86a" strokeWidth="2.5" strokeLinecap="round" /></svg>Recorded</span>
-          <span><svg width="28" height="6"><line x1="1" y1="3" x2="27" y2="3" stroke="#b9c1c7" strokeWidth="2" strokeDasharray="4 4" strokeLinecap="round" /></svg>Estimate</span>
+          <span><svg width="28" height="6"><line x1="1" y1="3" x2="27" y2="3" stroke="#8d98a5" strokeWidth="2" strokeDasharray="4 4" strokeLinecap="round" /></svg>Estimate</span>
           <span className="mono">Sample business · illustrative</span>
         </p>
       </div>

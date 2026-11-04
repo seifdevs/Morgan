@@ -1,6 +1,6 @@
 /* ---------- Hero dashboard (sequence driven by Motion in HeroDashboard; static styles only here) ---------- */
 .hero-art { position: relative; width: 100%; max-width: 600px; aspect-ratio: 600 / 500; margin-inline: auto; }
-.ha-main { position: absolute; inset: 5% 0 0 0; background: linear-gradient(180deg, #151c25, #10161d); border: 1px solid var(--line); border-radius: var(--r-lg); padding: 18px; box-shadow: 0 1px 0 #ffffff08 inset, 0 24px 60px -24px #000a; display: flex; flex-direction: column; gap: 12px; overflow: hidden; }
+.ha-main { position: absolute; inset: 5% 0 0 0; background: linear-gradient(180deg, #19212B, #121820); border: 1px solid var(--line); border-radius: var(--r-lg); padding: 18px; box-shadow: 0 1px 0 #ffffff08 inset, 0 24px 60px -24px #000a; display: flex; flex-direction: column; gap: 12px; overflow: hidden; }
 .ha-top { display: flex; align-items: center; gap: 6px; }
 .ha-dot { width: 8px; height: 8px; border-radius: 50%; background: #27313c; }
 .ha-title { margin-left: 8px; font-size: 11px; letter-spacing: .12em; text-transform: uppercase; color: var(--muted); }
@@ -16,8 +16,8 @@
 .ha-inv-who { display: grid; font-weight: 600; font-size: 13px; line-height: 1.25; }
 .ha-inv-who small { color: var(--muted); font-weight: 400; font-size: 11px; }
 .ha-inv b { font: 700 15px var(--display); font-variant-numeric: tabular-nums; }
-.hi-stamp { display: inline-block; font: 800 10px var(--display); letter-spacing: .14em; text-transform: uppercase; color: #5fc79a; border: 1.5px solid #2f9b70; padding: 3px 7px; border-radius: 3px; transform: rotate(-8deg); }
-.ha-inv-note { margin: 0; padding: 0 4px; font-size: 11.5px; color: #5fc79a; }
+.hi-stamp { display: inline-block; font: 800 10px var(--display); letter-spacing: .14em; text-transform: uppercase; color: #2F9B70; border: 1.5px solid #2f9b70; padding: 3px 7px; border-radius: 3px; transform: rotate(-8deg); }
+.ha-inv-note { margin: 0; padding: 0 4px; font-size: 11.5px; color: #2F9B70; }
 .ha-caption { position: absolute; left: 0; top: 0; font-size: 10.5px; letter-spacing: .1em; text-transform: uppercase; color: #8d98a5aa; }
 
 /* ---------- Cash-flow river ---------- */
@@ -47,7 +47,7 @@
 .inv-flow.play .if-doc { animation: docSway 8s ease-in-out infinite; }
 .if-doc .wordmark span { color: #121820; }
 .if-doc-head { display: flex; justify-content: space-between; align-items: center; font: 700 12px var(--display); padding-bottom: 12px; border-bottom: 1px solid #ddd6c6; }
-.if-doc-lines { display: grid; gap: 7px; padding: 12px 0; font-size: 12px; color: #4a535c; }
+.if-doc-lines { display: grid; gap: 7px; padding: 12px 0; font-size: 12px; color: #8D98A5; }
 .if-doc-lines div { display: flex; justify-content: space-between; }
 .if-doc-total { display: flex; justify-content: space-between; align-items: baseline; border-top: 1.5px solid #121820; padding-top: 10px; font-size: 12px; }
 .if-doc-total b { font: 800 18px var(--display); }
@@ -60,7 +60,7 @@
 .lens { position: relative; display: grid; gap: 12px; padding: 22px; background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-lg); overflow: hidden; }
 .lens-row { display: grid; grid-template-columns: 80px 1fr; align-items: center; gap: 12px; font-size: 12.5px; color: var(--muted); }
 .lens-row div { height: 12px; background: var(--sunken); border-radius: 6px; overflow: hidden; }
-.lens-row i { display: block; height: 100%; width: var(--v); background: #4a5866; border-radius: 6px; transform: scaleX(0); transform-origin: left; }
+.lens-row i { display: block; height: 100%; width: var(--v); background: #27313C; border-radius: 6px; transform: scaleX(0); transform-origin: left; }
 .lens-row.hot span { color: var(--text); font-weight: 600; }
 .lens-row.hot i { background: linear-gradient(90deg, var(--gold-dim), var(--gold)); }
 .lens.play .lens-row i { animation: growX .9s calc(var(--i) * 90ms) var(--ease) forwards; }

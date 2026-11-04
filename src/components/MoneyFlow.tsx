@@ -135,13 +135,13 @@ export function MoneyFlow() {
             <div className="mf-legend" aria-hidden="true">
               <span><i className="lg-in" />Money in</span><span><i className="lg-out" />Money out</span>
               <span><svg width="22" height="6"><line x1="1" y1="3" x2="21" y2="3" stroke="#c9a86a" strokeWidth="2.5" /></svg>Recorded</span>
-              <span><svg width="22" height="6"><line x1="1" y1="3" x2="21" y2="3" stroke="#b9c1c7" strokeWidth="2" strokeDasharray="4 4" /></svg>Estimate</span>
+              <span><svg width="22" height="6"><line x1="1" y1="3" x2="21" y2="3" stroke="#8d98a5" strokeWidth="2" strokeDasharray="4 4" /></svg>Estimate</span>
             </div>
           </div>
 
           <svg className="mf-chart" viewBox={`0 0 ${W} ${H}`} role="img" aria-label={`Weekly cash statement, sample business. Opening ${fmt(OPENING)}. ${rows.map((r) => `Week of ${r.start}${r.est ? ' (estimate)' : ''}: in ${fmt(r.inflow)}, out ${fmt(r.outflow)}, closing ${fmt(r.close)}`).join('. ')}.`}>
             <defs>
-              <pattern id="mfPencil" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><line x1="0" y1="0" x2="0" y2="6" stroke="#b9c1c7" strokeOpacity=".35" strokeWidth="1.5" /></pattern>
+              <pattern id="mfPencil" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><line x1="0" y1="0" x2="0" y2="6" stroke="#8d98a5" strokeOpacity=".35" strokeWidth="1.5" /></pattern>
               <clipPath id="mfReveal"><m.rect x="0" y="0" height={H} style={{ width: revealW }} /></clipPath>
             </defs>
             {ticks.map((t) => (

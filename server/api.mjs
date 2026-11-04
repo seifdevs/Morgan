@@ -10,9 +10,13 @@ import {
   loadSession, requireAuth, requireAdmin, rateLimit, hashToken,
 } from './lib/auth.mjs';
 import { invoicePdf } from './lib/pdf.mjs';
+import { financialReportPdf } from './lib/reportPdf.mjs';
 import { mailConfigured, sendMail, notifyMail, localEmailPreviewEnabled, listLocalEmailPreviews } from './lib/mail.mjs';
 import * as A from './lib/analytics.mjs';
+import { horizonForecast } from './lib/horizon.mjs';
+import { askGemini, formattedMoneyValues, validateGeminiAnswer } from './lib/gemini.mjs';
 import { parseRegistrationStatement, parseMappedStatement } from './lib/registrationStatement.mjs';
+import { accountPlan, finalizeUsage, plans, releaseUsage, reserveUsage, usageSummary } from './lib/entitlements.mjs';
 
 const CURRENCIES = ['USD', 'EUR', 'GBP', 'CAD', 'AUD', 'EGP', 'AED', 'SAR', 'CHF', 'JPY'];
 const INVOICE_STATUSES = ['draft', 'sent', 'paid', 'void'];
@@ -26,7 +30,7 @@ const publicBusiness = (b) => ({
   financialSetupComplete: b.financialSetupComplete ?? true, onboardingStep: b.onboardingStep ?? 0, isDemo: b.isDemo === true, industry: b.industry || '', monthlyBudgetCents: b.monthlyBudgetCents ?? null, minimumCashCents: b.minimumCashCents ?? null,
   cashAccounts: (b.cashAccounts || []).map(({ _id, ...a }) => ({ id: String(_id), ...a })),
 });
-const pub = ({ _id, businessId, ...rest }) => ({ id: String(_id), ...rest });
+const pub = ({ _id, businessId, quotaReservationId, ...rest }) => ({ id: String(_id), ...rest });
 
 export function decorateInvoice(inv, now = today()) {
   const totals = invoiceTotals(inv);
@@ -35,7 +39,7 @@ export function decorateInvoice(inv, now = today()) {
   let displayStatus = inv.status;
   if (inv.status === 'sent') displayStatus = amountPaid > 0 ? 'partial' : 'sent';
   if (inv.status === 'sent' && inv.dueDate < now) displayStatus = 'overdue';
-  const { _id, businessId, ...rest } = inv;
+  const { _id, businessId, quotaReservationId, ...rest } = inv;
   return {
     id: String(_id), ...rest, totals, amountPaid, balanceDue, displayStatus,
     payments: (inv.payments || []).map((p) => ({ ...p, id: String(p.id), transactionId: p.transactionId ? String(p.transactionId) : null })),
@@ -44,7 +48,7 @@ export function decorateInvoice(inv, now = today()) {
 }
 
 export function decorateBill(bill) {
-  const { _id, businessId, ...rest } = bill;
+  const { _id, businessId, quotaReservationId, ...rest } = bill;
   const legacyPaid = bill.status === 'paid' && !(bill.payments || []).length;
   const amountPaidCents = legacyPaid ? bill.amountCents : (bill.payments || []).reduce((sum, p) => sum + p.amountCents, 0);
   const balanceDueCents = Math.max(0, bill.amountCents - amountPaidCents);
@@ -75,6 +79,26 @@ export function createApi(db, { secureCookies }) {
   const setCookie = (res, token, maxAgeMs) => res.setHeader('Set-Cookie', sessionCookie(token, { secure: secureCookies, maxAgeMs }));
   const scoped = (req, extra = {}) => ({ businessId: req.businessId, ...extra });
   const business = (req) => C('businesses').findOne({ _id: req.businessId });
+  const planFor = (req) => accountPlan(req.user);
+  const createWithUsage = async (req, metric, amount, create, details = {}) => {
+    const reservation = amount ? await reserveUsage(db, { businessId: req.businessId, planId: planFor(req), metric, amount }) : null;
+    try {
+      const value = await create(reservation?.token);
+      if (reservation) await finalizeUsage(db, reservation, details);
+      return value;
+    } catch (error) {
+      await releaseUsage(db, reservation);
+      throw error;
+    }
+  };
+  const claimScenarioSlot = async (req, scenarioId) => {
+    const bizId = req.businessId, limit = plans[planFor(req)].limits.scenariosPerWorkspace;
+    const existing = await C('horizonScenarios').find(scoped(req), { projection: { _id: 1 } }).toArray();
+    const ids = existing.map((item) => String(item._id));
+    await C('businesses').updateOne({ _id: bizId, scenarioSlotsInitialized: { $ne: true } }, { $set: { activeScenarioIds: ids, scenarioSlotsInitialized: true } });
+    const result = await C('businesses').updateOne({ _id: bizId, $expr: { $lt: [{ $size: { $ifNull: ['$activeScenarioIds', []] } }, limit] } }, { $addToSet: { activeScenarioIds: String(scenarioId) } });
+    if (!result.modifiedCount) throw new HttpError(429, `Saved scenario limit reached for ${plans[planFor(req)].name}. Remove a scenario or upgrade your plan.`);
+  };
   const appOrigin = () => (process.env.APP_URL || '').replace(/\/$/, '');
   const emailLink = (path, token) => `${appOrigin()}/${path}?token=${encodeURIComponent(token)}`;
   const sendVerification = async (user) => {
@@ -99,6 +123,22 @@ export function createApi(db, { secureCookies }) {
     const banks = await C('bankDirectory').find(query, { projection: { _id: 0, id: 1, name: 1, state: 1, rank: 1 } }).sort({ rank: 1 }).limit(100).toArray();
     const meta = await C('bankDirectory').findOne({ country }, { projection: { source: 1, sourceName: 1, sourceUpdatedAt: 1 } });
     res.json({ country, currency: 'USD', banks, source: meta?.source || 'https://api.fdic.gov/banks/institutions', sourceName: meta?.sourceName || 'FDIC BankFind Suite', sourceUpdatedAt: meta?.sourceUpdatedAt || null });
+  }));
+  r.get('/contact/status', (_req, res) => {
+    res.json({ available: Boolean(process.env.MORGAN_CONTACT_EMAIL && mailConfigured()) });
+  });
+  r.post('/contact', rateLimit({ key: 'public-contact', limit: 5, windowMs: 60 * 60e3 }), wrap(async (req, res) => {
+    const body = req.body || {};
+    // Quietly accept honeypot submissions without forwarding them.
+    if (typeof body.website === 'string' && body.website.trim()) return res.json({ ok: true });
+    const recipient = String(process.env.MORGAN_CONTACT_EMAIL || '').trim();
+    if (!recipient || !mailConfigured()) throw new HttpError(503, 'The contact form is not available right now. Please try again later.');
+    const name = str(body.name, 'Name', { required: true, max: 100 });
+    const sender = email(body.email);
+    const topic = oneOf(body.topic, 'Topic', ['Product question', 'Technical support', 'Partnership', 'Other']);
+    const message = str(body.message, 'Message', { required: true, min: 10, max: 4000 });
+    await sendMail({ db, to: recipient, replyTo: sender, kind: 'contact', subject: `Morgan contact · ${topic}`, text: `From: ${name}\nReply to: ${sender}\nTopic: ${topic}\n\n${message}` });
+    res.status(202).json({ ok: true });
   }));
   const statementBalanceReview = async (parsed, b) => {
     const openingBalanceCents = cents(b.openingBalanceCents, 'Statement opening balance');
@@ -162,9 +202,10 @@ export function createApi(db, { secureCookies }) {
     const isConfiguredAdmin = mail === String(process.env.MORGAN_ADMIN_EMAIL || '').trim().toLowerCase();
     // Email confirmation is temporarily disabled. Password validation and the normal
     // server-side session remain required for access.
-    const user = { _id: new ObjectId(), name, email: mail, role: isConfiguredAdmin ? 'admin' : 'user', passwordHash: await hashPassword(password), businessId, emailVerified: true, emailVerificationDisabled: true, createdAt: new Date() };
+    const user = { _id: new ObjectId(), name, email: mail, role: isConfiguredAdmin ? 'admin' : 'user', planId: 'starter', billingStatus: 'free', passwordHash: await hashPassword(password), businessId, emailVerified: true, emailVerificationDisabled: true, createdAt: new Date() };
     const accountId = new ObjectId(), importId = new ObjectId(), importedAt = new Date();
     const statementQuery = { businessId };
+    let registrationReservation;
     try {
     await C('businesses').insertOne({
       _id: businessId, name: businessName, currency, timezone, invoicePrefix: 'INV-', invoiceSeq: 0, defaultTaxRateBps: 0,
@@ -175,10 +216,14 @@ export function createApi(db, { secureCookies }) {
       const fingerprint = createHash('sha256').update([String(accountId), row.date, currency, row.reference ? `ref:${row.reference.toLowerCase()}` : `${row.amountCents}:${row.description.toLowerCase().replace(/\s+/g, ' ').trim()}`].join('|')).digest('hex');
       return { businessId, accountId, date: row.date, description: row.description, vendor: row.vendor || '', category: 'Uncategorized', financialClass: 'unclassified', amountCents: row.amountCents, currency, reference: row.reference, runningBalanceCents: row.runningBalanceCents, sourceRowNumber: row.sourceRowNumber, source: 'bank-statement', importId, fingerprint, reconciliationStatus: 'unmatched', createdAt: importedAt, updatedAt: importedAt };
     });
+    if (docs.length) registrationReservation = await reserveUsage(db, { businessId, planId: 'starter', metric: 'financialRecords', amount: docs.length, now: importedAt });
+    if (registrationReservation) docs.forEach((doc) => { doc.quotaReservationId = registrationReservation.token; });
     await C('transactions').insertMany(docs);
     await C('statementImports').insertOne({ _id: importId, businessId, accountId, filename, fileType: parsed.fileType, sourceFile: parsed.sourceFile, sourceFileSha256: parsed.sourceFileSha256, importedAt, status: 'complete', ...statementSummary, transactionCount: parsed.rows.length, importedCount: docs.length, duplicateCount });
     await C('users').insertOne(user);
+    if (registrationReservation) await finalizeUsage(db, registrationReservation, { entity: 'registration-statement-import' });
     } catch (e) {
+      await releaseUsage(db, registrationReservation);
       await Promise.all([
         C('transactions').deleteMany(statementQuery), C('statementImports').deleteMany(statementQuery),
         C('bankAccounts').deleteMany(statementQuery), C('businesses').deleteOne({ _id: businessId }),
@@ -193,7 +238,7 @@ export function createApi(db, { secureCookies }) {
 
   r.post('/auth/demo', rateLimit({ key: 'demo-account', limit: 10, windowMs: 3600e3 }), wrap(async (req, res) => {
     const id = new ObjectId(), businessId = new ObjectId(), now = new Date();
-    const user = { _id: id, name: 'Morgan Demo User', email: `demo-${id}@example.invalid`, role: 'user', passwordHash: '', businessId, emailVerified: true, isDemo: true, createdAt: now };
+    const user = { _id: id, name: 'Morgan Demo User', email: `demo-${id}@example.invalid`, role: 'user', planId: 'starter', billingStatus: 'free', passwordHash: '', businessId, emailVerified: true, isDemo: true, createdAt: now };
     const openingDate = today();
     const businessDoc = { _id: businessId, name: 'Northstar Creative Studio', currency: 'USD', timezone: 'America/New_York', invoicePrefix: 'DEMO-', invoiceSeq: 0, defaultTaxRateBps: 0, paymentTermsDays: 30, openingBalanceCents: 8426000, openingBalanceDate: openingDate, financialSetupComplete: true, onboardingStep: 4, isDemo: true, monthlyBudgetCents: 6000000, minimumCashCents: 1500000, cashAccounts: [{ _id: new ObjectId(), name: 'Operating account · simulated', type: 'checking', currency: 'USD', balanceCents: 8426000, balanceDate: openingDate, notes: 'Simulated demo data' }], ownerId: id, createdAt: now };
     await C('businesses').insertOne(businessDoc); await C('users').insertOne(user);
@@ -295,6 +340,9 @@ export function createApi(db, { secureCookies }) {
     if (b.isDemo !== true && b.financialSetupComplete !== true && req.path !== '/financial-setup' && req.path !== '/planning-items' && !req.path.startsWith('/planning-items/')) throw new HttpError(403, 'Complete the required financial onboarding before opening this workspace.');
     next();
   }));
+
+  r.get('/plans', (_req, res) => res.json({ plans, paidCheckoutAvailable: false, trialsAvailable: false }));
+  r.get('/usage', wrap(async (req, res) => res.json(await usageSummary(db, req.businessId, planFor(req)))));
   r.use(wrap(async (req, _res, next) => {
     const b = await C('businesses').findOne({ _id: req.businessId }, { projection: { timezone: 1 } });
     req.today = todayIn(b?.timezone);
@@ -353,7 +401,7 @@ export function createApi(db, { secureCookies }) {
   r.delete('/account', rateLimit({ key: 'delete-account', limit: 5, windowMs: 3600e3, failuresOnly: true }), wrap(async (req, res) => {
     if (!(await verifyPassword(String(req.body?.password || ''), req.user.passwordHash))) throw new HttpError(401, 'Password is incorrect');
     const q = { businessId: req.businessId };
-    await Promise.all(['transactions', 'invoices', 'customers', 'bills', 'planningItems', 'bankAccounts', 'statementImports', 'financialAudit'].map((c) => C(c).deleteMany(q)));
+    await Promise.all(['transactions', 'invoices', 'customers', 'bills', 'planningItems', 'bankAccounts', 'statementImports', 'financialAudit', 'horizonScenarios', 'geminiThreads', 'usagePeriods', 'usageEvents', 'intelligenceRequests'].map((c) => C(c).deleteMany(q)));
     await C('sessions').deleteMany({ userId: req.user._id });
     await C('businesses').deleteOne({ _id: req.businessId });
     await C('users').deleteOne({ _id: req.user._id });
@@ -469,7 +517,7 @@ export function createApi(db, { secureCookies }) {
     if (fields.nextDate < req.today) throw bad('Next expected date must be today or later');
     if (fields.endDate && fields.endDate < fields.nextDate) throw bad('End date cannot be before the next expected date');
     const doc = { ...fields, businessId: req.businessId, currency: (await business(req)).currency, createdAt: new Date(), updatedAt: new Date() };
-    const { insertedId } = await C('planningItems').insertOne(doc);
+    const { insertedId } = await createWithUsage(req, 'financialRecords', 1, (token) => C('planningItems').insertOne({ ...doc, quotaReservationId: token }), { entity: 'planning-item' });
     res.status(201).json(pub({ _id: insertedId, ...doc }));
   }));
   r.patch('/planning-items/:id', wrap(async (req, res) => {
@@ -563,7 +611,7 @@ export function createApi(db, { secureCookies }) {
 
   r.post('/transactions', wrap(async (req, res) => {
     const doc = { ...txnFields(req.body || {}), businessId: req.businessId, source: 'manual', createdAt: new Date() };
-    const { insertedId } = await C('transactions').insertOne(doc);
+    const { insertedId } = await createWithUsage(req, 'financialRecords', 1, (token) => C('transactions').insertOne({ ...doc, quotaReservationId: token }), { entity: 'transaction' });
     res.status(201).json(pub({ _id: insertedId, ...doc }));
   }));
 
@@ -577,7 +625,12 @@ export function createApi(db, { secureCookies }) {
       catch (e) { errors.push({ row: i + 1, message: e.message }); }
     });
     if (errors.length) return res.status(400).json({ error: `${errors.length} row(s) are invalid. Nothing was imported.`, errors: errors.slice(0, 50) });
-    await C('transactions').insertMany(docs);
+    const importId = new ObjectId(); docs.forEach((doc) => { doc.importId = importId; });
+    await createWithUsage(req, 'financialRecords', docs.length, async (token) => {
+      docs.forEach((doc) => { doc.quotaReservationId = token; });
+      try { return await C('transactions').insertMany(docs); }
+      catch (error) { await C('transactions').deleteMany(scoped(req, { importId })); throw error; }
+    }, { entity: 'transaction-import' });
     res.status(201).json({ imported: docs.length });
   }));
 
@@ -820,6 +873,8 @@ export function createApi(db, { secureCookies }) {
     sourceFileSha256 = req.statementSource.sourceFileSha256;
     const rows = review.rows.filter((r) => !r.duplicate);
     const docs = rows.map((row) => ({ businessId: req.businessId, accountId: account._id, date: row.date, description: row.description, vendor: row.vendor, category: row.category, financialClass: row.financialClass, amountCents: row.amountCents, currency: row.currency, reference: row.reference, runningBalanceCents: row.runningBalanceCents, sourceRowNumber: row.sourceRowNumber, source: 'bank-statement', importId, fingerprint: row.fingerprint, reconciliationStatus: 'unmatched', createdAt: importedAt, updatedAt: importedAt }));
+    const reservation = docs.length ? await reserveUsage(db, { businessId: req.businessId, planId: planFor(req), metric: 'financialRecords', amount: docs.length, now: importedAt }) : null;
+    if (reservation) docs.forEach((doc) => { doc.quotaReservationId = reservation.token; });
     const session = db.client?.startSession?.();
     let transactionalImport = false;
     try {
@@ -835,6 +890,7 @@ export function createApi(db, { secureCookies }) {
         await C('statementImports').insertOne({ _id: importId, businessId: req.businessId, accountId: account._id, filename, fileType, sourceFile, sourceFileSha256, importedAt, status: 'complete', periodStart: review.summary.periodStart, periodEnd: review.summary.periodEnd, openingBalanceCents: review.summary.openingBalanceCents, closingBalanceCents: review.summary.closingBalanceCents, calculatedClosingBalanceCents: review.summary.calculatedClosingBalanceCents, discrepancyCents: review.summary.discrepancyCents, transactionCount: review.summary.count, importedCount: docs.length, duplicateCount: review.summary.duplicates, creditsCents: review.summary.creditsCents, debitsCents: review.summary.debitsCents });
       }
     } catch (e) {
+      await releaseUsage(db, reservation);
       if (!transactionalImport) {
         await C('transactions').deleteMany(scoped(req, { importId }));
         await C('statementImports').deleteOne(scoped(req, { _id: importId }));
@@ -842,6 +898,7 @@ export function createApi(db, { secureCookies }) {
       if (e.code === 11000) throw new HttpError(409, 'These transactions were imported in another session. Refresh the preview before retrying.');
       throw e;
     } finally { await session?.endSession(); }
+    if (reservation) await finalizeUsage(db, reservation, { entity: 'bank-statement-import' });
     const emailNotification = await notifyAccount(req.user, 'Bank statement import complete', `A bank statement was imported into Morgan.\n\nAccount: ${account.name}\nFile: ${filename}\nPeriod: ${review.summary.periodStart} to ${review.summary.periodEnd}\nImported transactions: ${docs.length}\nDuplicates skipped: ${review.summary.duplicates}\nImported at: ${importedAt.toISOString()}\n\nIf you did not perform this action, review your account sessions in Morgan Settings.`);
     res.status(201).json({ importId: String(importId), imported: docs.length, duplicates: review.summary.duplicates, matchedSuggestions: review.rows.filter((r) => r.suggestedMatch).length, summary: review.summary, emailNotification });
   }));
@@ -965,19 +1022,23 @@ export function createApi(db, { secureCookies }) {
 
   r.post('/invoices', wrap(async (req, res) => {
     const fields = await invoiceFields(req, req.body || {});
+    const reservation = await reserveUsage(db, { businessId: req.businessId, planId: planFor(req), metric: 'financialRecords', amount: 1 });
+    try {
     // A prefix change can make a new number collide with an old one; skip ahead until it's free.
     for (let attempt = 0; attempt < 20; attempt++) {
       const biz = await C('businesses').findOneAndUpdate({ _id: req.businessId }, { $inc: { invoiceSeq: 1 } }, { returnDocument: 'after' });
       const doc = {
         ...fields, businessId: req.businessId, number: `${biz.invoicePrefix}${String(biz.invoiceSeq).padStart(4, '0')}`,
-        status: 'draft', payments: [], createdAt: new Date(), updatedAt: new Date(),
+        status: 'draft', payments: [], quotaReservationId: reservation.token, createdAt: new Date(), updatedAt: new Date(),
       };
       try {
         const { insertedId } = await C('invoices').insertOne(doc);
+        await finalizeUsage(db, reservation, { entity: 'invoice' });
         return res.status(201).json(dec(req, { _id: insertedId, ...doc }));
       } catch (e) { if (e.code !== 11000) throw e; }
     }
     throw new HttpError(409, 'Could not allocate an invoice number. Change the invoice prefix in Settings.');
+    } catch (error) { await releaseUsage(db, reservation); throw error; }
   }));
 
   r.patch('/invoices/:id', wrap(async (req, res) => {
@@ -1044,7 +1105,11 @@ export function createApi(db, { secureCookies }) {
       businessId: req.businessId, date: payDate, description: `Payment · ${inv.number}`, vendor: inv.customer.name,
       category: 'Client revenue', amountCents, notes: method, invoiceId: inv._id, paymentId, source: 'invoice-payment', createdAt: new Date(),
     };
-    const { insertedId } = await C('transactions').insertOne(txn);
+    const reservation = await reserveUsage(db, { businessId: req.businessId, planId: planFor(req), metric: 'financialRecords', amount: 1 });
+    let insertedId, paymentCommitted = false;
+    try {
+    txn.quotaReservationId = reservation.token;
+    ({ insertedId } = await C('transactions').insertOne(txn));
     const payment = { id: paymentId, amountCents, date: payDate, method, transactionId: insertedId };
     const fullyPaid = amountCents === d.balanceDue;
     // Guard against concurrent payments: only apply if payments array is unchanged.
@@ -1052,8 +1117,11 @@ export function createApi(db, { secureCookies }) {
       { _id: inv._id, businessId: req.businessId, status: 'sent', payments: inv.payments || [] },
       { $push: { payments: payment }, $set: { ...(fullyPaid && { status: 'paid', paidAt: new Date() }) } },
     );
-    if (!modifiedCount) { await C('transactions').deleteOne({ _id: insertedId }); throw new HttpError(409, 'The invoice changed. Refresh and try again.'); }
+    if (!modifiedCount) throw new HttpError(409, 'The invoice changed. Refresh and try again.');
+    paymentCommitted = true;
+    await finalizeUsage(db, reservation, { entity: 'invoice-payment-transaction' });
     res.status(201).json(dec(req, { ...inv, payments: [...(inv.payments || []), payment], ...(fullyPaid && { status: 'paid' }) }));
+    } catch (error) { if (!paymentCommitted) { if (insertedId) await C('transactions').deleteOne({ _id: insertedId, businessId: req.businessId }); await releaseUsage(db, reservation); } throw error; }
   }));
 
   r.delete('/invoices/:id/payments/:pid', wrap(async (req, res) => {
@@ -1092,7 +1160,7 @@ export function createApi(db, { secureCookies }) {
   r.get('/bills', wrap(async (req, res) => res.json((await C('bills').find(scoped(req)).sort({ status: -1, dueDate: 1 }).toArray()).map(decorateBill))));
   r.post('/bills', wrap(async (req, res) => {
     const doc = { ...billFields(req.body || {}, req.today), status: 'unpaid', payments: [], businessId: req.businessId, createdAt: new Date() };
-    const { insertedId } = await C('bills').insertOne(doc);
+    const { insertedId } = await createWithUsage(req, 'financialRecords', 1, (token) => C('bills').insertOne({ ...doc, quotaReservationId: token }), { entity: 'bill' });
     res.status(201).json(decorateBill({ _id: insertedId, ...doc }));
   }));
   r.patch('/bills/:id', wrap(async (req, res) => {
@@ -1118,14 +1186,22 @@ export function createApi(db, { secureCookies }) {
     if (amountCents > balanceDueCents) throw bad('Payment exceeds the balance due');
     const paymentId = new ObjectId();
     const nextStatus = amountCents === balanceDueCents ? 'paid' : 'partial';
-    const { insertedId } = await C('transactions').insertOne({
+    const transaction = {
       businessId: req.businessId, date: paidDate, description: bill.description || `Bill · ${bill.vendor}`, vendor: bill.vendor,
       category: bill.category, financialClass: 'expense', amountCents: -amountCents, notes: '', billId: _id, paymentId, source: 'bill-payment', createdAt: new Date(),
-    });
+    };
+    const reservation = await reserveUsage(db, { businessId: req.businessId, planId: planFor(req), metric: 'financialRecords', amount: 1 });
+    let paymentCommitted = false, insertedId;
+    try {
+    transaction.quotaReservationId = reservation.token;
+    ({ insertedId } = await C('transactions').insertOne(transaction));
     const payment = { id: paymentId, amountCents, date: paidDate, method: 'Manual', transactionId: insertedId };
     const { modifiedCount } = await C('bills').updateOne(scoped(req, { _id, status: bill.status, payments }), { $push: { payments: payment }, $set: { status: nextStatus, ...(nextStatus === 'paid' && { paidDate }), transactionId: insertedId } });
-    if (!modifiedCount) { await C('transactions').deleteOne({ _id: insertedId }); throw new HttpError(409, 'The bill changed. Refresh and try again.'); }
+    if (!modifiedCount) throw new HttpError(409, 'The bill changed. Refresh and try again.');
+    paymentCommitted = true;
+    await finalizeUsage(db, reservation, { entity: 'bill-payment-transaction' });
     res.json(decorateBill({ ...bill, status: nextStatus, payments: [...payments, payment], ...(nextStatus === 'paid' && { paidDate }), transactionId: insertedId }));
+    } catch (error) { if (!paymentCommitted) { if (insertedId) await C('transactions').deleteOne({ _id: insertedId, businessId: req.businessId }); await releaseUsage(db, reservation); } throw error; }
   }));
   r.post('/bills/:id/unpay', wrap(async (req, res) => {
     const _id = oid(req.params.id);
@@ -1226,7 +1302,7 @@ export function createApi(db, { secureCookies }) {
     const overdue = open.filter((i) => i.displayStatus === 'overdue');
     const unpaidBills = bills.filter((b) => b.status !== 'paid');
     const plannedItems = await C('planningItems').find(scoped(req)).toArray();
-    const plan = A.cashflow({ txns, invoices: [], bills, plannedItems, business: biz, today: now, startingCash: currentCash.balance });
+    const plan = A.cashflow({ txns, invoices: [], bills, plannedItems, business: biz, today: now, startingCash: currentCash.balance, days: plans[planFor(req)].limits.forecastDays });
     const monthlySpend = A.spending(txns, `${now.slice(0, 7)}-01`, now).total;
     const balanceAt = (count) => {
       if (currentCash.balance === null) return null;
@@ -1258,7 +1334,7 @@ export function createApi(db, { secureCookies }) {
         monthlySpend,
         monthlyRemaining: biz.monthlyBudgetCents == null ? null : biz.monthlyBudgetCents - monthlySpend,
         minimumCashCents: biz.minimumCashCents ?? null,
-        forecast: { days7: balanceAt(1), days30: balanceAt(5), days90: balanceAt(13) },
+        forecast: { days7: balanceAt(1), days30: balanceAt(5), days90: plans[planFor(req)].limits.forecastDays >= 90 ? balanceAt(13) : null },
         upcoming: upcomingPlan,
       },
     });
@@ -1276,12 +1352,199 @@ export function createApi(db, { secureCookies }) {
     const { txns, invoices, bills, biz, now } = await loadAll(req);
     const [plannedItems, cashContext] = await Promise.all([C('planningItems').find(scoped(req)).toArray(), loadCashContext(req, biz, txns)]);
     const currentCash = cashContext.positionAt(now);
-    res.json({ ...A.cashflow({ txns, invoices, bills, plannedItems, business: biz, today: now, startingCash: currentCash.balance }), cashSource: currentCash.source, cashAsOf: currentCash.asOf, cashMissingAccounts: currentCash.missingAccounts });
+    res.json({ ...A.cashflow({ txns, invoices, bills, plannedItems, business: biz, today: now, startingCash: currentCash.balance, days: plans[planFor(req)].limits.forecastDays }), cashSource: currentCash.source, cashAsOf: currentCash.asOf, cashMissingAccounts: currentCash.missingAccounts });
+  }));
+
+  /* ---------------- Horizon: deterministic forecasts and saved scenarios ---------------- */
+  const horizonContext = async (req) => {
+    const { txns, invoices, bills, biz, now } = await loadAll(req);
+    const [plannedItems, cashContext] = await Promise.all([C('planningItems').find(scoped(req)).toArray(), loadCashContext(req, biz, txns)]);
+    return { txns, invoices, bills, plannedItems, biz, now, cash: cashContext.positionAt(now) };
+  };
+  const runHorizon = async (req, scenario = null) => {
+    const ctx = await horizonContext(req);
+    const forecast = horizonForecast({ ...ctx, today: ctx.now, startingCash: ctx.cash.balance, days: plans[planFor(req)].limits.forecastDays, scenario });
+    return { ...forecast, periodDays: Number(req.query.days) || 90, cashSource: ctx.cash.source, cashAsOf: ctx.cash.asOf, cashMissingAccounts: ctx.cash.missingAccounts, hasOpeningBalance: ctx.cash.balance !== null };
+  };
+  r.get('/horizon', wrap(async (req, res) => {
+    const maxDays = plans[planFor(req)].limits.forecastDays;
+    const periodDays = int(req.query.days ?? maxDays, 'Forecast period', { min: 30, max: 90 });
+    if (![30, 60, 90].includes(periodDays)) throw bad('Forecast period must be 30, 60, or 90 days');
+    if (periodDays > maxDays) throw new HttpError(403, `Your ${plans[planFor(req)].name} plan includes forecasts up to ${maxDays} days. Upgrade to explore a longer period.`);
+    const scenarioId = req.query.scenarioId ? oid(req.query.scenarioId) : null;
+    const scenario = scenarioId ? await C('horizonScenarios').findOne(scoped(req, { _id: scenarioId })) : null;
+    if (scenarioId && !scenario) throw new HttpError(404, 'Scenario not found');
+    const data = await runHorizon(req, scenario);
+    data.periodDays = periodDays;
+    for (const key of Object.keys(data.forecasts)) data.forecasts[key] = data.forecasts[key].slice(0, periodDays);
+    data.checkpoints = data.checkpoints.filter((point) => point.days <= periodDays);
+    data.events = data.events.filter((event) => event.date <= addDays(req.today, periodDays));
+    data.scenario = scenario ? { id: String(scenario._id), name: scenario.name, assumptions: scenario.assumptions } : null;
+    if (scenario) data.baseForecast = (await runHorizon(req)).forecasts;
+    res.json(data);
+  }));
+  const scenarioTypes = ['hire', 'lost-client', 'delayed-payments', 'new-client', 'increased-expense', 'large-purchase'];
+  const scenarioFields = (body) => {
+    const name = str(body?.name, 'Scenario name', { required: true, max: 100 });
+    if (!Array.isArray(body?.assumptions) || !body.assumptions.length || body.assumptions.length > 12) throw bad('Add between 1 and 12 scenario assumptions');
+    const assumptions = body.assumptions.map((a) => {
+      const type = oneOf(a?.type, 'Scenario type', scenarioTypes);
+      const startDate = date(a.startDate, 'Start date');
+      const title = str(a.name || type.replaceAll('-', ' '), 'Assumption name', { required: true, max: 100 });
+      if (type === 'delayed-payments') return { type, startDate, name: title, delayDays: int(a.delayDays, 'Payment delay', { min: 1, max: 90 }) };
+      return { type, startDate, name: title, amountCents: cents(a.amountCents, 'Amount', { min: 1 }), cadence: oneOf(a.cadence || (type === 'large-purchase' ? 'once' : 'monthly'), 'Frequency', ['once', 'monthly', 'quarterly']), durationMonths: a.durationMonths === undefined || a.durationMonths === null || a.durationMonths === '' ? null : int(a.durationMonths, 'Duration', { min: 1, max: 36 }) };
+    });
+    return { name, assumptions };
+  };
+  r.get('/horizon/scenarios', wrap(async (req, res) => {
+    const list = await C('horizonScenarios').find(scoped(req)).sort({ updatedAt: -1 }).toArray();
+    res.json(list.map(({ _id, businessId, ...item }) => ({ id: String(_id), ...item })));
+  }));
+  r.post('/horizon/scenarios', wrap(async (req, res) => {
+    const fields = scenarioFields(req.body);
+    const now = new Date();
+    const scenarioId = new ObjectId();
+    await claimScenarioSlot(req, scenarioId);
+    const doc = { _id: scenarioId, ...fields, businessId: req.businessId, createdAt: now, updatedAt: now };
+    let insertedId;
+    try { ({ insertedId } = await C('horizonScenarios').insertOne(doc)); }
+    catch (error) { await C('businesses').updateOne({ _id: req.businessId }, { $pull: { activeScenarioIds: String(scenarioId) } }); throw error; }
+    res.status(201).json({ id: String(insertedId), ...fields, createdAt: now, updatedAt: now });
+  }));
+  r.patch('/horizon/scenarios/:id', wrap(async (req, res) => {
+    const fields = scenarioFields(req.body); const updatedAt = new Date();
+    const found = await C('horizonScenarios').findOneAndUpdate(scoped(req, { _id: oid(req.params.id) }), { $set: { ...fields, updatedAt } }, { returnDocument: 'after' });
+    if (!found) throw new HttpError(404, 'Scenario not found');
+    const { _id, businessId, ...item } = found;
+    res.json({ id: String(_id), ...item });
+  }));
+  r.delete('/horizon/scenarios/:id', wrap(async (req, res) => {
+    const { deletedCount } = await C('horizonScenarios').deleteOne(scoped(req, { _id: oid(req.params.id) }));
+    if (!deletedCount) throw new HttpError(404, 'Scenario not found');
+    await C('businesses').updateOne({ _id: req.businessId }, { $pull: { activeScenarioIds: req.params.id } });
+    res.json({ ok: true });
+  }));
+
+  /* ---------------- Gemini financial intelligence ---------------- */
+  r.post('/gemini/ask', rateLimit({ key: 'gemini', limit: 20, windowMs: 60 * 60e3 }), wrap(async (req, res) => {
+    const question = str(req.body?.question, 'Question', { required: true, max: 1200 });
+    const requestId = typeof req.body?.requestId === 'string' && /^[a-zA-Z0-9_-]{16,100}$/.test(req.body.requestId) ? req.body.requestId : randomBytes(18).toString('base64url');
+    const requestKey = `${String(req.businessId)}:${requestId}`;
+    const requests = C('intelligenceRequests');
+    const previous = await requests.findOne({ _id: requestKey, businessId: req.businessId });
+    if (previous?.status === 'complete') return res.json(previous.response);
+    if (previous?.status === 'pending') throw new HttpError(409, 'This Morgan Intelligence request is already processing. Wait for it to finish before retrying.');
+    try { await requests.insertOne({ _id: requestKey, businessId: req.businessId, requestId, status: 'pending', createdAt: new Date() }); }
+    catch (error) { if (error.code === 11000) throw new HttpError(409, 'This Morgan Intelligence request is already processing.'); throw error; }
+    let usageReservation;
+    try {
+    usageReservation = await reserveUsage(db, { businessId: req.businessId, planId: planFor(req), metric: 'intelligenceRequests' });
+    const scenario = req.body?.scenarioId ? await C('horizonScenarios').findOne(scoped(req, { _id: oid(req.body.scenarioId) })) : null;
+    if (req.body?.scenarioId && !scenario) throw new HttpError(404, 'Scenario not found');
+    const threadId = req.body?.threadId ? oid(req.body.threadId) : new ObjectId();
+    let thread = req.body?.threadId ? await C('geminiThreads').findOne(scoped(req, { _id: threadId })) : null;
+    if (req.body?.threadId && !thread) throw new HttpError(404, 'Conversation not found');
+    const ctx = await horizonContext(req);
+    const forecast = horizonForecast({ ...ctx, today: ctx.now, startingCash: ctx.cash.balance, days: plans[planFor(req)].limits.forecastDays, scenario });
+    const currency = ctx.biz.currency;
+    const displayMoney = (amount, sign = false) => amount === null || amount === undefined ? null : formatMoney(amount, currency, { sign });
+    const transactionRecords = ctx.txns.filter((t) => !t.excludedFromTotals).slice().sort((a, b) => b.date.localeCompare(a.date)).slice(0, 100);
+    const openInvoices = ctx.invoices.filter((i) => ['sent', 'partial', 'overdue'].includes(i.displayStatus));
+    const openBills = ctx.bills.filter((b) => ['unpaid', 'partial'].includes(b.status));
+    const sourceRecords = [
+      ...transactionRecords.map((t) => ({ id: String(t._id), kind: 'transaction', label: t.description || t.vendor || 'Recorded transaction', amountCents: t.amountCents, date: t.date })),
+      ...openInvoices.map((i) => ({ id: i.id, kind: 'invoice', label: `Invoice ${i.number} · ${i.customer.name}`, amountCents: i.balanceDue, date: i.dueDate })),
+      ...openBills.map((b) => ({ id: String(b._id), kind: 'bill', label: `Bill · ${b.vendor}`, amountCents: -(b.balanceDueCents ?? b.amountCents), date: b.dueDate })),
+    ].map((record, index) => ({ ...record, ref: `source-${index + 1}` }));
+    const sourceRef = new Map(sourceRecords.map((record) => [`${record.kind}:${record.id}`, record.ref]));
+    const sourceByRef = new Map(sourceRecords.map((record) => [record.ref, record]));
+    const checkpoints = (result) => (result?.checkpoints || []).map((point) => ({
+      period: `${point.days}-day outlook`, conservative: displayMoney(point.conservativeCents),
+      base: displayMoney(point.baseCents), optimistic: displayMoney(point.optimisticCents),
+    }));
+    const withoutScenario = scenario ? horizonForecast({ ...ctx, today: ctx.now, startingCash: ctx.cash.balance, days: plans[planFor(req)].limits.forecastDays }) : null;
+    const cadenceLabel = (cadence) => ({ once: 'one time', monthly: 'monthly', quarterly: 'quarterly' }[cadence] || 'recurring');
+    const scenarioTypes = { hire: 'Hire a team member', 'lost-client': 'Lose a client', 'delayed-payments': 'Delay client payments', 'new-client': 'Add a new client', 'increased-expense': 'Increase recurring expenses', 'large-purchase': 'Make a large purchase' };
+    const scenarioContext = scenario ? {
+      name: scenario.name,
+      assumptions: scenario.assumptions.map((item) => ({
+        change: scenarioTypes[item.type] || 'Business change', description: item.name, starts: item.startDate,
+        ...(item.type === 'delayed-payments' ? { paymentDelay: `${item.delayDays} days` } : { amount: displayMoney(item.amountCents), frequency: cadenceLabel(item.cadence), duration: item.durationMonths ? `${item.durationMonths} months` : 'through the forecast' }),
+      })),
+    } : null;
+    const sourceKind = (type) => ({ invoice: 'client payment', bill: 'bill payment', planned: 'scheduled movement', scenario: 'scenario change' }[type] || 'cash movement');
+    const confidenceLabel = (value) => ({ invoiced: 'invoice issued', contracted: 'contracted', estimated: 'estimated', planned: 'planned', confirmed: 'confirmed bill', scenario: 'scenario input' }[value] || 'recorded');
+    const baseEvents = forecast.events.map((event) => ({
+      type: sourceKind(event.type), description: event.label, date: event.date,
+      amount: displayMoney(event.amountCents, true), confidence: confidenceLabel(event.confidence),
+      ...(event.type === 'invoice' && event.paymentPrediction ? { paymentTiming: event.paymentPrediction.observations ? `${event.paymentPrediction.delayDays} days average customer delay based on ${event.paymentPrediction.observations} paid invoices` : 'No paid-invoice history; due date used' } : {}),
+      ...(['invoice', 'bill'].includes(event.type) && sourceRef.has(`${event.type}:${event.id}`) ? { source: sourceRef.get(`${event.type}:${event.id}`) } : {}),
+    }));
+    const financialContext = {
+      currency,
+      today: ctx.now,
+      recordedCash: { amount: displayMoney(ctx.cash.balance), asOf: ctx.cash.asOf, source: ctx.cash.source ? ({ 'opening-balance': 'Business opening balance updated with later recorded activity', 'bank-accounts': 'Recorded bank account balances' }[ctx.cash.source] || 'Recorded account balance') : 'No dated cash balance available' },
+      selectedScenario: scenarioContext,
+      forecast: {
+        case: scenario ? `Selected scenario: ${scenario.name}` : 'Business forecast',
+        outcomes: checkpoints(forecast),
+        ...(withoutScenario ? { businessForecastWithoutScenario: checkpoints(withoutScenario) } : {}),
+        weeklyBaseCase: forecast.forecasts.base.filter((_row, index) => index % 7 === 6).map((row) => ({
+          weekEnding: row.date, expectedInflow: displayMoney(row.inflowsCents), expectedOutflow: displayMoney(row.outflowsCents),
+          netMovement: displayMoney(row.netCents, true), projectedCash: displayMoney(row.balanceCents),
+        })),
+        lowestProjectedCash: forecast.lowPoint ? { date: forecast.lowPoint.date, amount: displayMoney(forecast.lowPoint.balanceCents) } : null,
+        confidence: { description: forecast.confidence.level, recordedHistoryDays: forecast.confidence.historyDays, clearlyClassifiedTransactionsPercent: Math.round(forecast.confidence.classifiedTransactions * 100) },
+        assumptions: {
+          receiptLikelihood: forecast.assumptions.collectionRates,
+          bills: forecast.assumptions.bills,
+          invoiceTiming: forecast.assumptions.paymentTiming,
+          recentUnlinkedDailyNetCashActivity: displayMoney(forecast.assumptions.runRateCentsPerDay, true),
+        },
+        scheduledMovements: baseEvents,
+      },
+      outstandingInvoices: openInvoices.map((invoice) => ({
+        source: sourceRef.get(`invoice:${invoice.id}`), invoice: invoice.number, customer: invoice.customer.name,
+        due: invoice.dueDate, amountDue: displayMoney(invoice.balanceDue), status: invoice.displayStatus,
+      })),
+      unpaidBills: openBills.map((bill) => ({
+        source: sourceRef.get(`bill:${String(bill._id)}`), supplier: bill.vendor, due: bill.dueDate,
+        amountDue: displayMoney(bill.balanceDueCents ?? bill.amountCents), status: bill.status,
+      })),
+      recentRecordedActivity: transactionRecords.map((transaction) => ({
+        source: sourceRef.get(`transaction:${String(transaction._id)}`), date: transaction.date,
+        description: transaction.description || transaction.vendor || 'Recorded transaction',
+        amount: displayMoney(transaction.amountCents, true), category: transaction.category,
+      })),
+    };
+    const allowedIds = new Set(sourceRecords.map((record) => record.ref));
+    const answer = await askGemini({ question, history: (thread?.messages || []).slice(-10), financialContext });
+    const validated = validateGeminiAnswer(answer, allowedIds, formattedMoneyValues(financialContext));
+    const citations = validated.citations.map((citation) => ({ ...citation, label: sourceByRef.get(citation.recordId).label }));
+    const citedEvidence = citations.map((citation) => sourceByRef.get(citation.recordId)).filter(Boolean).map(({ id, label, amountCents, date }) => ({ id, label, amountCents, date }));
+    const messages = [...(thread?.messages || []), { role: 'user', content: question }, { role: 'assistant', content: validated.answer }].slice(-12);
+    const now = new Date();
+    await C('geminiThreads').updateOne(scoped(req, { _id: threadId }), { $set: { messages, updatedAt: now }, $setOnInsert: { businessId: req.businessId, createdAt: now } }, { upsert: true });
+    const response = { threadId: String(threadId), ...validated, citations, evidence: citedEvidence };
+    const promptTokens = answer.usageMetadata?.promptTokenCount ?? null, outputTokens = answer.usageMetadata?.candidatesTokenCount ?? null;
+    const inputRate = Number(process.env.GEMINI_INPUT_USD_PER_MILLION_TOKENS), outputRate = Number(process.env.GEMINI_OUTPUT_USD_PER_MILLION_TOKENS);
+    const estimatedCostMicros = Number.isFinite(inputRate) && Number.isFinite(outputRate) && promptTokens !== null && outputTokens !== null ? Math.round(promptTokens * inputRate + outputTokens * outputRate) : null;
+    await finalizeUsage(db, usageReservation, { entity: 'intelligence-response', requestId, promptTokens, outputTokens, totalTokens: answer.usageMetadata?.totalTokenCount ?? null, provider: 'gemini', estimatedCostMicros });
+    await requests.updateOne({ _id: requestKey, businessId: req.businessId }, { $set: { status: 'complete', response, completedAt: new Date() } });
+    res.json(response);
+    } catch (error) {
+      await releaseUsage(db, usageReservation);
+      await requests.deleteOne({ _id: requestKey, businessId: req.businessId, status: 'pending' });
+      throw error;
+    }
   }));
 
   r.get('/insights', wrap(async (req, res) => {
     const { txns, invoices, bills, biz, now } = await loadAll(req);
     const list = A.insights({ txns, invoices, bills, today: now, currencyFmt: (c) => formatMoney(c, biz.currency) });
+    const cashCtx = await horizonContext(req);
+    const forecast = horizonForecast({ ...cashCtx, today: now, startingCash: cashCtx.cash.balance });
+    if (forecast.lowPoint && forecast.lowPoint.balanceCents < (biz.minimumCashCents || 0)) list.unshift({ id: 'cash-shortage', kind: 'cash-shortage', severity: 'high', title: 'Projected cash falls below your reserve', detail: `Base-case cash reaches ${formatMoney(forecast.lowPoint.balanceCents, biz.currency)} on ${forecast.lowPoint.date}, below your ${formatMoney(biz.minimumCashCents || 0, biz.currency)} reserve. This is an estimate from saved records and assumptions.`, amountCents: forecast.lowPoint.balanceCents, evidence: [], evidenceType: 'transaction' });
     const ids = new Set(list.filter((i) => i.evidenceType === 'transaction').flatMap((i) => i.evidence));
     res.json({ insights: list, transactions: txns.filter((t) => ids.has(String(t._id))).map(pub), recurring: A.recurringCharges(txns, now) });
   }));
@@ -1322,6 +1585,26 @@ export function createApi(db, { secureCookies }) {
     const transactions = await C('transactions').countDocuments(scoped(req, { source: 'bank-statement', date: { $regex: `^${year}-` }, reconciliationStatus: { $ne: 'matched' } }));
     const discrepancies = imports.filter((item) => item.discrepancyCents !== null && item.discrepancyCents !== 0).length;
     res.json({ year, accounts: accounts.map((a) => ({ id: String(a._id), name: a.name, currency: a.currency })), months, unmatchedTransactions: transactions, statementDiscrepancies: discrepancies });
+  }));
+  r.get('/reports/pdf', wrap(async (req, res) => {
+    const reservation = await reserveUsage(db, { businessId: req.businessId, planId: planFor(req), metric: 'pdfReports' });
+    try {
+    const year = int(req.query.year ?? Number(req.today.slice(0, 4)), 'Year', { min: 1990, max: 2200 });
+    const { txns, invoices, bills, biz, now } = await loadAll(req);
+    const pnl = A.profitAndLoss(txns.filter((t) => (t.currency || biz.currency) === biz.currency), year);
+    const [cashContext, ctx] = await Promise.all([loadCashContext(req, biz, txns), horizonContext(req)]);
+    const cash = cashContext.positionAt(now);
+    const forecast = horizonForecast({ ...ctx, today: now, startingCash: cash.balance, days: plans[planFor(req)].limits.forecastDays });
+    const report = financialReportPdf({
+      business: biz, year, pnl, overview: { asOf: now, cashCents: cash.balance, cashAsOf: cash.asOf, forecastCommentary: forecast.lowPoint && forecast.lowPoint.balanceCents < (biz.minimumCashCents || 0) ? `The base-case estimate falls below the configured cash reserve on ${forecast.lowPoint.date}. Review the saved forecast assumptions.` : 'No reserve breach appears in the base-case estimate for this period.' },
+      forecast, invoices, bills,
+    });
+    await finalizeUsage(db, reservation, { entity: 'financial-report-pdf', year });
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="morgan-financial-report-${year}.pdf"`);
+    res.setHeader('Cache-Control', 'private, no-store');
+    res.end(report);
+    } catch (error) { await releaseUsage(db, reservation); throw error; }
   }));
 
   r.use((_req, _res, next) => next(new HttpError(404, 'Not found')));

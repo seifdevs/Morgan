@@ -16,10 +16,13 @@ import { Logout, RequireAdminRoute, RequireAuth } from './pages/app/AppLayout';
 import './styles/base.css';
 import './styles/public.css';
 import './styles/home.css';
+import './styles/marketing-journey.css';
 import './styles/hero.css';
 import './styles/app.css';
 import './styles/illustrations.css';
 import './styles/system.css';
+import './styles/simplified.css';
+import './styles/marketing-experience.css';
 
 // The workspace is split into its own chunks so the marketing site stays light.
 const Overview = lazy(() => import('./pages/app/Overview'));
@@ -38,6 +41,10 @@ const Reports = lazy(() => import('./pages/app/Planning').then((m) => ({ default
 const Settings = lazy(() => import('./pages/app/Settings'));
 const FinancialOnboarding = lazy(() => import('./pages/app/FinancialOnboarding'));
 const Admin = lazy(() => import('./pages/app/Admin'));
+const FinancialCore = lazy(() => import('./pages/app/FinancialCore'));
+const Horizon = lazy(() => import('./pages/app/Horizon'));
+const Usage = lazy(() => import('./pages/app/Usage'));
+const Monitor = lazy(() => import('./pages/app/Monitor'));
 
 const page = (el: React.ReactNode) => <Suspense fallback={<div className="panel"><LoadingRows rows={6} /></div>}>{el}</Suspense>;
 
@@ -76,6 +83,9 @@ const app = (
             <Route path="app" element={<RequireAuth />}>
               <Route path="onboarding" element={page(<FinancialOnboarding />)} />
               <Route index element={page(<Overview />)} />
+              <Route path="financial-core" element={page(<FinancialCore />)} />
+              <Route path="horizon" element={page(<Horizon />)} />
+              <Route path="monitor" element={page(<Monitor />)} />
               <Route path="spending" element={page(<Spending />)} />
               <Route path="transactions" element={page(<Transactions />)} />
               <Route path="bank-accounts" element={page(<BankAccounts />)} />
@@ -93,6 +103,7 @@ const app = (
               <Route path="advisor" element={page(<Insights />)} />
               <Route path="reports" element={page(<Reports />)} />
               <Route path="settings" element={page(<Settings />)} />
+              <Route path="usage" element={page(<Usage />)} />
               <Route path="*" element={<NotFound />} />
             </Route>
           </Routes>

@@ -32,14 +32,17 @@ Checks: `npm run typecheck`, `npm test` (API + money tests against a throwaway i
 | `TRUST_PROXY=1` | Set behind a reverse proxy so rate limits see real client IPs. |
 | `RESEND_API_KEY`, `MAIL_FROM` | Server-only Resend credentials and sender address for verification, onboarding, password reset, security, statement, and invoice emails. |
 | `APP_URL` | Public origin used to build password-reset links (never taken from the request Host header). Reset is offered only when this and email are configured. |
+| `MORGAN_CONTACT_EMAIL` | Optional recipient for the public contact form. Requires `RESEND_API_KEY` and `MAIL_FROM`; submissions are rate limited and sent as plain text. |
+| `GEMINI_API_KEY`, `GEMINI_MODEL` | Optional server-only Gemini Horizon explanations. The key never goes to the browser; forecasts and financial records continue to work without it. |
+| `GEMINI_INPUT_USD_PER_MILLION_TOKENS`, `GEMINI_OUTPUT_USD_PER_MILLION_TOKENS` | Optional operator supplied rates for internal per-response Gemini cost estimates; leave unset if the active model pricing is unknown. Token counts are stored when Gemini returns them. |
 
 Production serves the session cookie with `Secure`, so run it behind HTTPS.
 
 ## Deploying
 
-- **Vercel:** Vite serves the static app from `dist/`; `api/index.mjs` adapts Morgan's Express API to a Node.js Function, and `vercel.json` forwards `/api/*` requests to it while sending client-side routes to the app. Set `MONGODB_URI`, `MONGODB_DB`, `RESEND_API_KEY`, `MAIL_FROM`, and `APP_URL` in the Production environment. `MORGAN_ADMIN_EMAIL` is optional. Redeploy after changing environment variables. Health check: `GET /api/health` (pings MongoDB).
+- **Vercel:** Vite serves the static app from `dist/`; `api/index.mjs` adapts Morgan's Express API to a Node.js Function, and `vercel.json` forwards `/api/*` requests to it while sending client-side routes to the app. Set `MONGODB_URI`, `MONGODB_DB`, `RESEND_API_KEY`, `MAIL_FROM`, and `APP_URL` in the Production environment. `MORGAN_ADMIN_EMAIL` is optional. Set `GEMINI_API_KEY` to enable Gemini explanations in Horizon; it is not needed for deterministic calculations. Redeploy after changing environment variables. Health check: `GET /api/health` (pings MongoDB).
 - **Long-running Node host (Render, Railway, Fly.io, VM):** Build with `npm ci && npm run build`, then run `npm start`. Keep the process behind HTTPS. The in-memory rate limiter is intended for one instance; use a shared store before scaling horizontally.
-- On first start it creates its indexes (unique `users.email`, unique `invoices.businessId+number`, TTL on `sessions.expiresAt`, and lookups by `businessId`). Use a database dedicated to Morgan (`MONGODB_DB`, default `morgan`).
+- On first start it creates indexes, including unique account/month usage periods, and applies an idempotent current-month usage baseline to existing business records. Use a database dedicated to Morgan (`MONGODB_DB`, default `morgan`).
 - Atlas: create a database user with `readWrite` on the Morgan database only, and allow the host's outbound IPs in the access list.
 - Production sends a Content-Security-Policy that allows the Helix widget from `helixbots.io`; adjust `server/app.mjs` if you add third-party scripts.
 
@@ -47,14 +50,16 @@ See `docs/LEGACY.md` for what changed from the original static site and `docs/AT
 
 ## How it works
 
+- **Plan usage:** `shared/plans.json` is the common source for pricing and limits. New and legacy accounts resolve to Starter unless the server-side user record has a recognized plan ID. Record, AI and report limits use MongoDB atomic reservations and persisted UTC calendar-month usage periods; account-side plan or price values are ignored. Paid plans and seven-day trials are not active because payment processing and verified subscription webhooks are not configured.
+
 - **Auth:** scrypt password hashes, random session tokens stored hashed in `sessions` (30-day TTL index), `HttpOnly; SameSite=Lax` cookie, CSRF header check on state-changing requests, rate limits on login/register/password change, all other sessions revoked on password change.
 - **Isolation:** every collection is keyed by `businessId`, taken from the server-side session — never from the request.
 - **Money:** integer cents everywhere (`shared/money.js`, used by both server and client). Invoice totals are recomputed on the server. Imported bank movements change cash; they enter income or expense reporting only after classification. Transfers and card repayments are kept out of operating income and expenses.
 - **Dates:** "today" (overdue status, projections) uses the business time zone set at signup / in Settings.
-- **Figures:** actuals come from stored records. An account balance requires a dated opening point or statement close, then later account movements. Business cash totals include only the business currency; other currencies remain separate. The cash-flow projection and run-rate are labelled estimates; what-if inputs are never saved. Cost insights list the transactions behind every finding.
+- **Figures:** actuals come from stored records. An account balance requires a dated opening point or statement close, then later account movements. Business cash totals include only the business currency; other currencies remain separate. Horizon uses the same integer-cent engine for all plans and caps each account at its plan horizon (30 days on Starter, up to 90 days on paid tiers). Scenarios are persisted separately from the ledger. Monitor findings link to source records. Gemini uses bounded business-scoped context and explains results without changing records or calculations.
 - **Statement imports:** CSV, XLSX, and text-selectable PDF statements are parsed for review before confirmation. Imports are deduplicated by account and transaction fingerprint, saved with the original file and a checksum, and tracked in account history. The original file is private to the business-scoped database record and is not returned by list APIs. Statement periods can be reviewed against monthly coverage. Scanned PDF OCR and legacy XLS are not supported; convert those statements to CSV or XLSX. Imported statements are user-supplied records and do not independently verify bank payments.
 
-Collections: `users`, `businesses`, `sessions`, `transactions`, `customers`, `invoices` (with embedded payments), `bills` (with embedded payments), `bankAccounts`, `statementImports` (including private source files), `planningItems`, `financialAudit`.
+Collections: `users`, `businesses`, `sessions`, `transactions`, `customers`, `invoices` (with embedded payments), `bills` (with embedded payments), `bankAccounts`, `statementImports` (including private source files), `planningItems`, `horizonScenarios`, `geminiThreads`, `financialAudit`.
 
 ## Not included
 

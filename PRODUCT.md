@@ -12,11 +12,11 @@ The primary user owns a small agency or professional-services firm, has no finan
 
 ## Product Purpose
 
-Morgan is a financial workspace. It covers spending analysis, invoicing, receivables, bills, a 13-week cash-flow projection, profit and loss, and rule-based cost insights. It exists so owners can understand their financial position and the records behind their decisions. Success means an owner can answer "where do we stand and what's coming" from their own records, and trust every figure because it traces back to a transaction, invoice, payment or bill.
+Morgan is a financial workspace. It covers spending analysis, invoicing, receivables, bills, plan-bounded cash-flow projections (30 days on Starter, up to 90 days on published paid tiers), profit and loss, saved scenario simulations, evidence-based alerts and financial explanations. It exists so owners can understand their position and the records behind their decisions. Success means an owner can answer "where do we stand and what's coming" from their own records, and trust every figure because it traces back to a transaction, invoice, payment, bill or explicit estimate.
 
 ## Positioning
 
-Morgan sits on top of accounting software. The accounting software records what happened; Morgan shows what it means. Every figure comes from stored records. Estimates are always labelled and look visibly different from recorded figures. Every cost insight links to the transactions behind it. Morgan never shows invented savings, simulated data or AI-written answers.
+Morgan sits on top of accounting software. The accounting software records what happened; Morgan shows what it means. Every figure comes from stored records or a clearly labelled deterministic estimate. Every cost insight links to its source. Gemini can explain the provided evidence and forecasts, but cannot change records, calculations or produce unsupported figures.
 
 ## Operating Context
 
@@ -28,13 +28,18 @@ Morgan sits on top of accounting software. The accounting software records what 
 
 ## Capabilities and Constraints
 
-- App routes: Overview, Transactions, Spending, Invoices (with receivables aging), Bills (`/app/payables`), Cash flow / Planning (`/app/forecast`), Reports (P&L), Cost insights (`/app/advisor`), Settings.
+- App routes: Dashboard, Financial Core, Monitor, Horizon, Reports, Settings. Financial Core links to the existing Transactions, Spending, Invoices (with receivables aging), Bills (`/app/payables`), Customers and Bank Accounts workflows. The legacy Cash flow / Planning route (`/app/forecast`) remains available.
 - Public site: Home, Features, Pricing, About, Resources (6 guides), FAQ, Contact, Login/Signup.
 - Money is stored as integer cents, and the server recomputes invoice totals.
-- What-if inputs in cash-flow planning are never saved.
+- Horizon uses the same deterministic cash calculation engine on every plan. Starter can request 30 days; the published Pro and Max allowances are 90 days. Starter responses stop at the plan boundary, including the legacy cash-flow route and dashboard summaries.
+- Scenario assumptions (hiring, lost or new clients, delayed receipts, increased costs and large purchases) are stored in a separate business-scoped collection and recomputed against the current records; they never create or modify ledger entries.
+- Monitor surfaces overdue invoices, late bills, possible duplicates, unusual expenses, vendor spending increases, recurring charge changes and forecast reserve pressure with links to supporting records.
+- Gemini explanations are optional. The server sends relevant scoped records, plan-bounded deterministic forecast output, assumptions and the selected scenario; conversation context is bounded and business-scoped. Completed responses use an atomic monthly reservation, failed requests release it, request IDs replay the saved response, and provider token counts are retained internally. Cost estimates remain blank unless the server operator supplies both model token rates.
+- Reports include a downloadable PDF generated from saved records and deterministic forecasts; the P&L CSV export remains available.
 - Email (invoice delivery, password reset) is optional. Without it, the UI has to say email isn't configured and offer PDF download plus "mark as sent".
-- Not included: payment processing, file or receipt upload, OCR, a chat assistant, a review queue, or global search. Search only exists on the Transactions and Invoices pages.
-- Pricing is proposed only: Free, and Professional at $49.99/month, an unconfirmed draft. No plan can be bought, and signup collects no payment details.
+- Not included: live bank or accounting-software integrations, payment processing, file or receipt upload, OCR, a review queue, or global search. Search only exists on the Transactions and Invoices pages. Gemini requires a server-side API key; Horizon and Monitor work without it.
+- Pricing is published as Starter (free), Pro ($49.99 monthly / $499 annual), and Max ($199.99 monthly / $1,499 annual). Starter limits are active; paid checkout, trials, subscription webhooks, and paid plan activation are not configured. New accounts default to Starter, and client input cannot assign a paid plan. There is one business per account and no team invitation or multi-workspace management flow yet; the published seat and additional workspace allowances require those product systems before paid launch.
+- Monthly usage uses UTC calendar periods and resets by deriving a new period at 00:00 UTC on the first. A startup baseline records current-month transactions, invoices, bills, and planning items created before this accounting shipped. New records count once when accepted: transactions (including accepted imported rows), invoices, bills, and planned items. Customer profiles, bank accounts, edits, exports, generated forecasts, Monitor findings, and linked payment views do not count separately.
 - Stack is already set: Vite + React + TypeScript frontend, Express + MongoDB backend, one long-running Node process (not serverless).
 
 ## Brand Commitments

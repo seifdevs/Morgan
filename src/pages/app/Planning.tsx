@@ -129,7 +129,7 @@ export function CashFlow() {
               {data.hasOpeningBalance ? <LineChart ariaLabel="Projected weekly cash balance" height={260}
                 labels={['Today', ...model.rows.map((r) => formatDay(r.end))]}
                 series={[
-                  { key: 'proj', label: 'Projected balance (estimate)', color: '#b9c1c7', dashed: true, values: [data.opening, ...model.rows.map((r) => r.balance)] },
+                  { key: 'proj', label: 'Projected balance (estimate)', color: '#8d98a5', dashed: true, values: [data.opening, ...model.rows.map((r) => r.balance)] },
                   { key: 'rec', label: 'Recorded today', color: '#c9a86a', values: [data.opening, ...model.rows.map(() => null)] },
                 ]}
                 format={(v) => money(v, { compact: true })} markIndex={0} /> : <EmptyState kind="chart" title="Starting cash is needed for a balance forecast" actions={<Link className="btn sm outline" to="/app/settings#business">Set opening balance</Link>}>Expected money in and out is listed below, but Morgan will not draw a cash balance from an assumed zero.</EmptyState>}
@@ -226,6 +226,7 @@ export function Reports() {
       <PageHeader eyebrow="Plan" title="Profit & loss" description="Monthly income and expenses by category, from recorded transactions (cash basis)."
         actions={<>
           <select className="select" aria-label="Year" value={year} onChange={(e) => setYear(Number(e.target.value))} style={{ width: 'auto' }}>{[0, 1, 2, 3].map((i) => <option key={i}>{thisYear - i}</option>)}</select>
+          <a className="btn primary" href={`/api/reports/pdf?year=${year}`}><Icon name="download" size={16} />Download PDF</a>
           <button className="btn outline" onClick={exportCsv} disabled={!data || (!data.income.length && !data.expenses.length)}><Icon name="download" size={16} />Export CSV</button>
         </>} />
       {error && <ErrorBox message={error} onRetry={reload} />}

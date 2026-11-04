@@ -134,7 +134,7 @@
 .mx-decision-visual text { fill: #8D98A5; font: 9px var(--mono); letter-spacing: .1em; }
 
 /* Four-pillar switcher */
-.mx-system { max-width: none; background: var(--m-ivory-50); }
+.mx-system { max-width: none; color: var(--m-ink-900); background: var(--m-forest-950); }
 .mx-system > .mx-section-head, .mx-system > .mx-pillar-explorer { max-width: var(--m-content); margin-inline: auto; padding-inline: 30px; }
 .mx-pillar-explorer { display: grid; grid-template-columns: 280px minmax(0,1fr); min-height: 460px; border: 1px solid #27313C; background: var(--m-white); box-shadow: 0 30px 70px -60px #00000066; }
 .mx-pillar-tabs { display: flex; flex-direction: column; padding: 14px 0; border-right: 1px solid var(--m-rule); }

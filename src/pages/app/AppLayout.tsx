@@ -38,7 +38,7 @@ function AppLayout() {
   const toast = useToast();
   const [policyLoading, setPolicyLoading] = useState(true);
   const [policyMissing, setPolicyMissing] = useState<{ id: string; label: string; slug: string; version: string }[]>([]);
-  const [policyChecks, setPolicyChecks] = useState<Record<string, boolean>>({});
+  const [policyAccepted, setPolicyAccepted] = useState(false);
   const [policySaving, setPolicySaving] = useState(false);
   const [policyError, setPolicyError] = useState('');
   useEffect(() => { setOpen(false); }, [loc.pathname]);
@@ -54,7 +54,7 @@ function AppLayout() {
 
   async function acceptPolicies() {
     setPolicyError('');
-    if (!policies.every(({ id }) => policyChecks[id])) { setPolicyError('Select each policy to confirm acceptance.'); return; }
+    if (!policyAccepted) { setPolicyError('Confirm that you agree to all three current Morgan policies.'); return; }
     setPolicySaving(true);
     try {
       await api('/account/policies/accept', { method: 'POST', body: { acceptedPolicies: policies.map(({ id, version }) => ({ policyId: id, version })) } });
@@ -99,7 +99,7 @@ function AppLayout() {
           <button onClick={signOut}><Icon name="logout" size={17} /><span>Log out</span></button>
         </div>
       </aside>
-      <main className="main" id="main">{business?.isDemo && <div className="demo-banner"><b>SIMULATED DEMO WORKSPACE</b><span>All people, businesses, transactions, balances, and plans shown here are fictional sample data.</span></div>}{policyLoading ? <section className="panel panel-body">Checking current policies…</section> : policyMissing.length ? <section className="panel policy-renewal"><span className="eyebrow">Policy update / acknowledgement required</span><h1>Review Morgan’s current policies</h1><p>To continue using Morgan, review and accept each current policy. Your acceptance is recorded with the document version and time.</p>{policyError && <div className="form-error" role="alert">{policyError}</div>}{policyMissing.map((item) => <label className="check-row" key={item.id}><input type="checkbox" checked={!!policyChecks[item.id]} onChange={(event) => setPolicyChecks({ ...policyChecks, [item.id]: event.target.checked })} /><span>I have read and agree to the current <a href={`/policies/${item.slug}`} target="_blank" rel="noreferrer">{item.label}</a> (version {item.version}).</span></label>)}<button className="btn primary" disabled={policySaving} onClick={() => void acceptPolicies()}>{policySaving ? 'Saving acceptance…' : 'Accept current policies'}</button></section> : policyError ? <section className="panel panel-body form-error" role="alert">Could not check policy acceptance: {policyError}. Refresh to try again.</section> : <div className="route" key={loc.pathname}><Outlet /></div>}</main>
+      <main className="main" id="main">{business?.isDemo && <div className="demo-banner"><b>SIMULATED DEMO WORKSPACE</b><span>All people, businesses, transactions, balances, and plans shown here are fictional sample data.</span></div>}{policyLoading ? <section className="panel panel-body">Checking current policies…</section> : policyMissing.length ? <section className="panel policy-renewal"><span className="eyebrow">Policy update / acknowledgement required</span><h1>Review Morgan’s current policies</h1><p>Review all three current policies. Morgan records their versions and your acceptance time.</p>{policyError && <div className="form-error" role="alert">{policyError}</div>}<label className="check-row policy-acceptance"><input type="checkbox" checked={policyAccepted} onChange={(event) => setPolicyAccepted(event.target.checked)} /><span>I have read and agree to all three current Morgan policies: {policies.map((item, index) => <span key={item.id}>{index > 0 ? (index === policies.length - 1 ? ', and ' : ', ') : ''}<a href={`/policies/${item.slug}`} target="_blank" rel="noreferrer">{item.label}</a> (version {item.version})</span>)}.</span></label><button className="btn primary" disabled={policySaving || !policyAccepted} onClick={() => void acceptPolicies()}>{policySaving ? 'Saving acceptance…' : 'I Agree to All 3 Policies'}</button></section> : policyError ? <section className="panel panel-body form-error" role="alert">Could not check policy acceptance: {policyError}. Refresh to try again.</section> : <div className="route" key={loc.pathname}><Outlet /></div>}</main>
     </div>
   );
 }

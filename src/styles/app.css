@@ -487,6 +487,21 @@ a.list-row:hover { background: #ffffff05; }
 @media(max-width:640px) { .horizon-kpis { grid-template-columns:1fr 1fr!important; } .monitor-alert { grid-template-columns:1fr; } .gemini-form { align-items:stretch; flex-direction:column; } .scenario-modal > .form-grid,.scenario-assumptions { padding-left:16px; padding-right:16px; } .scenario-assumptions + .btn { margin-left:16px; } .scenario-modal > .form-error { margin-left:16px; margin-right:16px; } }
 .usage-plan,.usage-period{display:flex;align-items:flex-start;justify-content:space-between;gap:24px;padding:24px;margin-bottom:18px}.usage-plan h2,.usage-period h2{margin:7px 0;font-size:22px}.usage-plan p,.usage-period p{margin:0;max-width:620px}.usage-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px;margin-bottom:18px}.usage-card{padding:20px}.usage-card-head{display:flex;justify-content:space-between;align-items:flex-start;gap:12px}.usage-card h2{font-size:16px;margin:0 0 6px}.usage-card p{font-size:12px;color:var(--muted);margin:0;max-width:220px;line-height:1.5}.usage-card-head>b{white-space:nowrap;font-size:15px}.usage-card-head>b span{color:var(--muted);font-weight:500}.usage-track{height:7px;background:var(--line);border-radius:99px;overflow:hidden;margin:22px 0 9px}.usage-track span{display:block;height:100%;background:var(--gold);border-radius:inherit;transition:width .35s ease}.usage-card>small{font-size:12px;color:var(--muted)}.usage-capabilities{display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end;max-width:560px}.usage-capabilities span{font-size:12px;color:var(--muted);padding:7px 10px;border:1px solid var(--line);border-radius:999px}.usage-payment-form{display:flex;gap:8px;min-width:260px}.usage-payment-form .input{min-width:120px}.section-gap .panel-body{padding:16px 20px}.usage-plan .badge{white-space:nowrap}.callout.info .link{margin-left:auto;white-space:nowrap}@media(max-width:800px){.usage-grid{grid-template-columns:1fr}.usage-period{flex-direction:column}.usage-capabilities{justify-content:flex-start}.usage-payment-form{min-width:0}}@media(max-width:520px){.usage-plan{padding:18px}.usage-card{padding:17px}.usage-card-head{flex-direction:column}.usage-card-head>b{font-size:18px}.callout.info{align-items:flex-start;flex-wrap:wrap}.callout.info .link{margin-left:24px}.usage-payment-form{flex-direction:column;align-items:stretch}.usage-payment-form .input{width:100%}}
 .admin-payment-table { min-width: 760px; }
+.paypal-plan-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; padding: 18px 20px; }
+.paypal-plan-option { display: grid; align-content: start; gap: 12px; min-width: 0; padding: 18px; border: 1px solid var(--line); border-radius: var(--r); background: var(--surface); }
+.paypal-plan-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.paypal-plan-heading > span { display: inline-flex; align-items: center; gap: 6px; color: var(--gold); font: 650 10px var(--mono); letter-spacing: .09em; }
+.paypal-plan-heading > b { font-size: 14px; text-align: right; }
+.paypal-plan-price { margin: 0; color: var(--text); font: 700 clamp(25px, 4vw, 36px)/1 var(--display); letter-spacing: -.04em; }
+.paypal-plan-price small { color: var(--muted); font: 500 11px var(--font); letter-spacing: 0; }
+.paypal-pay-button { width: 100%; min-height: 62px; display: flex; align-items: center; justify-content: center; gap: 12px; padding: 13px 18px; border: 1px solid #0070ba; border-radius: 7px; background: #0070ba; color: #fff; font: 700 16px/1 var(--font); cursor: pointer; box-shadow: 0 8px 24px -12px #0070ba99; transition: transform .16s ease, background .16s ease, box-shadow .16s ease; }
+.paypal-pay-button:hover:not(:disabled) { background: #005ea6; border-color: #005ea6; transform: translateY(-1px); box-shadow: 0 12px 28px -12px #0070baaa; }
+.paypal-pay-button:focus-visible { outline: 3px solid #c9a86a; outline-offset: 3px; }
+.paypal-pay-button:disabled { opacity: .5; cursor: not-allowed; }
+.paypal-pay-button .icon { color: #fff; }
+.paypal-mark { width: 34px; height: 28px; flex: 0 0 34px; }
+.paypal-premium-icon { margin-left: auto; color: #d5b978 !important; }
+.paypal-plan-term { color: var(--muted); font-size: 12px; text-align: center; }
 .usage-payment-form label { display: grid; gap: 5px; min-width: 210px; }
 .usage-payment-form label span { font-size: 11px; color: var(--muted); }
 .usage-payment-form .btn { align-self: start; }
@@ -495,5 +510,6 @@ a.list-row:hover { background: #ffffff05; }
 .policy-renewal p { margin: 0; }
 .policy-renewal .check-row { align-items: start; }
 .policy-renewal a { text-decoration: underline; }
+@media (max-width: 700px) { .paypal-plan-grid { grid-template-columns: 1fr; padding-inline: 14px; } .paypal-plan-option { padding: 16px; } }
 .admin-subscription-table { min-width: 880px; }
 .usage-payment-table { min-width: 700px; }

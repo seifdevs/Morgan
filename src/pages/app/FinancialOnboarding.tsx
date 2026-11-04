@@ -82,7 +82,7 @@ export default function FinancialOnboarding() {
           </div>)}
           <div className="row-actions"><button className="btn outline" type="button" onClick={() => setAccounts([...accountRows, { name: '', type: 'checking', currency: data.business.currency, balance: '', balanceDate: accountRows[0]?.balanceDate || data.today, notes: '' }])}><Icon name="plus" size={15} />Add another account</button></div>
           <div className="field"><label htmlFor="setup-industry">Business type <span className="muted">· optional</span></label><input className="input" id="setup-industry" placeholder="e.g. Design studio" value={industry ?? data.business.industry} onChange={(e) => setIndustry(e.target.value)} /></div>
-          {!data.business.openingBalanceDate && !accountRows.some((a) => a.name && a.balance) && <p className="hint">Your statement was imported at registration. Add a current balance if you want to set a newer starting point.</p>}
+          {!data.business.openingBalanceDate && !accountRows.some((a) => a.name && a.balance) && <p className="hint">This workspace has no starting cash balance yet. Add a current balance if you want to set one.</p>}
         </div>}
         {step === 1 && <div className="panel-body setup-form">
           <p className="muted">Add expected inflows and recurring expenses you want included in cash planning. These remain planned items; they are never recorded as paid or received.</p>

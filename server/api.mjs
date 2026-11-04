@@ -1,6 +1,6 @@
 import express from 'express';
 import { ObjectId } from 'mongodb';
-import { randomBytes, createHash } from 'node:crypto';
+import { randomBytes, createHash, randomUUID } from 'node:crypto';
 import { invoiceTotals, formatMoney } from '../shared/money.js';
 import {
   HttpError, bad, str, email, date, cents, int, oneOf, oid, today, addDays, escapeRegex,
@@ -17,6 +17,8 @@ import { horizonForecast } from './lib/horizon.mjs';
 import { askGemini, formattedMoneyValues, validateGeminiAnswer } from './lib/gemini.mjs';
 import { parseRegistrationStatement, parseMappedStatement } from './lib/registrationStatement.mjs';
 import { accountPlan, finalizeUsage, plans, releaseUsage, reserveUsage, usageSummary } from './lib/entitlements.mjs';
+import { createCheckoutDetails } from './lib/billing.mjs';
+import { acceptedCurrentPolicies, manualPaymentTermsText, manualPaymentTermsVersion, needsPolicyAcceptance, policies, policyVersions, registrationConsentText } from './lib/policies.mjs';
 
 const CURRENCIES = ['USD', 'EUR', 'GBP', 'CAD', 'AUD', 'EGP', 'AED', 'SAR', 'CHF', 'JPY'];
 const INVOICE_STATUSES = ['draft', 'sent', 'paid', 'void'];
@@ -75,11 +77,23 @@ export function createApi(db, { secureCookies }) {
     next();
   });
   r.use(loadSession(db));
+  r.use((req, _res, next) => {
+    if (!req.user || ['/account/policies/status', '/account/policies/accept', '/auth/me', '/auth/logout'].includes(req.path)) return next();
+    if (needsPolicyAcceptance(req.user)) return next(new HttpError(428, 'Review and accept the current Morgan policies to continue'));
+    next();
+  });
 
   const setCookie = (res, token, maxAgeMs) => res.setHeader('Set-Cookie', sessionCookie(token, { secure: secureCookies, maxAgeMs }));
   const scoped = (req, extra = {}) => ({ businessId: req.businessId, ...extra });
   const business = (req) => C('businesses').findOne({ _id: req.businessId });
   const planFor = (req) => accountPlan(req.user);
+  const addBillingInterval = (start, interval) => {
+    const year = start.getUTCFullYear(), month = start.getUTCMonth(), day = start.getUTCDate();
+    const target = interval === 'annual' ? new Date(Date.UTC(year + 1, month, 1)) : new Date(Date.UTC(year, month + 1, 1));
+    const lastDay = new Date(Date.UTC(target.getUTCFullYear(), target.getUTCMonth() + 1, 0)).getUTCDate();
+    target.setUTCDate(Math.min(day, lastDay));
+    return target;
+  };
   const createWithUsage = async (req, metric, amount, create, details = {}) => {
     const reservation = amount ? await reserveUsage(db, { businessId: req.businessId, planId: planFor(req), metric, amount }) : null;
     try {
@@ -111,6 +125,21 @@ export function createApi(db, { secureCookies }) {
       return { status: error.deliveryStatus || 'unknown', code: error.code || 'DELIVERY_FAILED', providerStatus: error.providerStatus ?? null, message: error.message, retryable: Boolean(error.retryable) };
     }
   };
+
+  r.get('/policies/current', (_req, res) => res.json(policies.map(({ id, label, slug, version }) => ({ id, label, slug, version }))));
+  r.get('/account/policies/status', requireAuth, wrap(async (req, res) => {
+    res.json({ required: policies.map(({ id, label, slug, version }) => ({ id, label, slug, version })), missing: policies.filter(({ id, version }) => req.user.policyVersionsAccepted?.[id] !== version).map(({ id, label, slug, version }) => ({ id, label, slug, version })) });
+  }));
+  r.post('/account/policies/accept', requireAuth, wrap(async (req, res) => {
+    const accepted = acceptedCurrentPolicies(req.body?.acceptedPolicies);
+    if (!accepted) throw bad('Accept every current Morgan policy before continuing.');
+    const acceptedAt = new Date();
+    const userId = req.user._id;
+    await C('policyAcceptances').insertMany(accepted.map((item) => ({ ...item, userId, acceptedAt, source: 'reacceptance', consentRecord: registrationConsentText })));
+    await C('users').updateOne({ _id: userId }, { $set: { policyVersionsAccepted: policyVersions, updatedAt: acceptedAt } });
+    req.user.policyVersionsAccepted = policyVersions;
+    res.json({ ok: true, acceptedAt });
+  }));
   const notifyAccount = (user, subject, text, kind = 'account_notification') => notifyMail({ db, kind, to: user.email, subject, text });
 
   /* ---------------- Auth ---------------- */
@@ -182,52 +211,60 @@ export function createApi(db, { secureCookies }) {
     const mail = email(b.email);
     const password = validatePassword(b.password);
     const businessName = str(b.businessName, 'Business name', { required: true, max: 120 });
+    const acceptedPolicies = acceptedCurrentPolicies(b.acceptedPolicies);
+    if (!acceptedPolicies) throw bad('Accept the current Morgan Terms of Use, Privacy Policy, and Refund Policy before creating an account.');
+    const hasStatement = Boolean(b.statementFileBase64 || b.statementFilename || b.bankId || b.statementReviewed || b.statementCurrencyConfirmed);
     const currency = oneOf(b.currency || 'USD', 'Currency', CURRENCIES);
-    const country = oneOf(b.country, 'Country', ['US']);
-    if (currency !== 'USD') throw bad('United States bank statement registration requires USD.');
-    if (b.statementCurrencyConfirmed !== true) throw bad('Confirm the statement is denominated in USD before registering it.');
-    const bank = await C('bankDirectory').findOne({ country, id: str(b.bankId, 'Bank', { required: true, max: 32 }) });
-    if (!bank) throw bad('Select a bank from the current bank directory.');
-    const filename = str(b.statementFilename, 'Statement filename', { required: true, max: 180 });
-    let parsed, statementSummary;
-    try { parsed = await parseRegistrationStatement({ filename, base64: b.statementFileBase64, currency }); statementSummary = await statementBalanceReview(parsed, b); }
-    catch (error) { throw bad(error.message || 'The statement could not be validated.'); }
-    if (b.statementReviewed !== true) throw bad('Review the extracted statement transactions and confirm before creating your account.');
-    const reviewedRows = dedupeRegistrationRows(parsed.rows, b.bankId);
-    const duplicateCount = reviewedRows.filter((row) => row.duplicate).length;
-    if (duplicateCount && b.duplicatesReviewed !== true) throw bad('Confirm that repeated statement rows should be skipped before creating the account.');
+    let country = null, bank = null, filename = null, parsed = null;
+    let statementSummary = { openingBalanceCents: 0, closingBalanceCents: 0, periodStart: null, periodEnd: null };
+    let reviewedRows = [], duplicateCount = 0;
+    if (hasStatement) {
+      country = oneOf(b.country, 'Country', ['US']);
+      if (currency !== 'USD') throw bad('Statement imports from United States banks require USD.');
+      if (b.statementCurrencyConfirmed !== true) throw bad('Confirm the statement is denominated in USD before registering it.');
+      bank = await C('bankDirectory').findOne({ country, id: str(b.bankId, 'Bank', { required: true, max: 32 }) });
+      if (!bank) throw bad('Select a bank from the current bank directory.');
+      filename = str(b.statementFilename, 'Statement filename', { required: true, max: 180 });
+      try { parsed = await parseRegistrationStatement({ filename, base64: b.statementFileBase64, currency }); statementSummary = await statementBalanceReview(parsed, b); }
+      catch (error) { throw bad(error.message || 'The statement could not be validated.'); }
+      if (b.statementReviewed !== true) throw bad('Review the extracted statement transactions and confirm before creating your account.');
+      reviewedRows = dedupeRegistrationRows(parsed.rows, b.bankId);
+      duplicateCount = reviewedRows.filter((row) => row.duplicate).length;
+      if (duplicateCount && b.duplicatesReviewed !== true) throw bad('Confirm that repeated statement rows should be skipped before creating the account.');
+    }
     const timezone = validTz(b.timezone) ? b.timezone : 'UTC';
     if (await C('users').findOne({ email: mail })) throw new HttpError(409, 'An account with this email already exists');
     const businessId = new ObjectId();
     const isConfiguredAdmin = mail === String(process.env.MORGAN_ADMIN_EMAIL || '').trim().toLowerCase();
     // Email confirmation is temporarily disabled. Password validation and the normal
     // server-side session remain required for access.
-    const user = { _id: new ObjectId(), name, email: mail, role: isConfiguredAdmin ? 'admin' : 'user', planId: 'starter', billingStatus: 'free', passwordHash: await hashPassword(password), businessId, emailVerified: true, emailVerificationDisabled: true, createdAt: new Date() };
-    const accountId = new ObjectId(), importId = new ObjectId(), importedAt = new Date();
+    const user = { _id: new ObjectId(), name, email: mail, role: isConfiguredAdmin ? 'admin' : 'user', planId: 'starter', billingStatus: 'free', passwordHash: await hashPassword(password), businessId, emailVerified: true, emailVerificationDisabled: true, policyVersionsAccepted: policyVersions, createdAt: new Date() };
+    const accountId = hasStatement ? new ObjectId() : null, importId = hasStatement ? new ObjectId() : null, importedAt = new Date();
     const statementQuery = { businessId };
     let registrationReservation;
     try {
     await C('businesses').insertOne({
       _id: businessId, name: businessName, currency, timezone, invoicePrefix: 'INV-', invoiceSeq: 0, defaultTaxRateBps: 0,
-      paymentTermsDays: 14, openingBalanceCents: statementSummary.closingBalanceCents, openingBalanceDate: statementSummary.periodEnd, financialSetupComplete: false, onboardingStep: 0, country, monthlyBudgetCents: null, minimumCashCents: null, ownerId: user._id, createdAt: new Date(),
+      paymentTermsDays: 14, openingBalanceCents: statementSummary.closingBalanceCents, openingBalanceDate: statementSummary.periodEnd, financialSetupComplete: false, onboardingStep: 0, country: country || 'US', monthlyBudgetCents: null, minimumCashCents: null, ownerId: user._id, createdAt: new Date(),
     });
-    await C('bankAccounts').insertOne({ _id: accountId, businessId, institution: bank.name, directoryId: bank.id, country, name: 'Primary business account', type: 'checking', currency, accountNumber: '', openingBalanceCents: statementSummary.openingBalanceCents, openingBalanceDate: statementSummary.periodStart, status: 'active', createdAt: importedAt, updatedAt: importedAt });
+    if (hasStatement) await C('bankAccounts').insertOne({ _id: accountId, businessId, institution: bank.name, directoryId: bank.id, country, name: 'Primary business account', type: 'checking', currency, accountNumber: '', openingBalanceCents: statementSummary.openingBalanceCents, openingBalanceDate: statementSummary.periodStart, status: 'active', createdAt: importedAt, updatedAt: importedAt });
     const docs = reviewedRows.filter((row) => !row.duplicate).map((row) => {
       const fingerprint = createHash('sha256').update([String(accountId), row.date, currency, row.reference ? `ref:${row.reference.toLowerCase()}` : `${row.amountCents}:${row.description.toLowerCase().replace(/\s+/g, ' ').trim()}`].join('|')).digest('hex');
       return { businessId, accountId, date: row.date, description: row.description, vendor: row.vendor || '', category: 'Uncategorized', financialClass: 'unclassified', amountCents: row.amountCents, currency, reference: row.reference, runningBalanceCents: row.runningBalanceCents, sourceRowNumber: row.sourceRowNumber, source: 'bank-statement', importId, fingerprint, reconciliationStatus: 'unmatched', createdAt: importedAt, updatedAt: importedAt };
     });
     if (docs.length) registrationReservation = await reserveUsage(db, { businessId, planId: 'starter', metric: 'financialRecords', amount: docs.length, now: importedAt });
     if (registrationReservation) docs.forEach((doc) => { doc.quotaReservationId = registrationReservation.token; });
-    await C('transactions').insertMany(docs);
-    await C('statementImports').insertOne({ _id: importId, businessId, accountId, filename, fileType: parsed.fileType, sourceFile: parsed.sourceFile, sourceFileSha256: parsed.sourceFileSha256, importedAt, status: 'complete', ...statementSummary, transactionCount: parsed.rows.length, importedCount: docs.length, duplicateCount });
+    if (docs.length) await C('transactions').insertMany(docs);
+    if (hasStatement) await C('statementImports').insertOne({ _id: importId, businessId, accountId, filename, fileType: parsed.fileType, sourceFile: parsed.sourceFile, sourceFileSha256: parsed.sourceFileSha256, importedAt, status: 'complete', ...statementSummary, transactionCount: parsed.rows.length, importedCount: docs.length, duplicateCount });
     await C('users').insertOne(user);
+    await C('policyAcceptances').insertMany(acceptedPolicies.map((item) => ({ ...item, userId: user._id, acceptedAt: importedAt, source: 'registration', consentRecord: registrationConsentText })));
     if (registrationReservation) await finalizeUsage(db, registrationReservation, { entity: 'registration-statement-import' });
     } catch (e) {
       await releaseUsage(db, registrationReservation);
       await Promise.all([
         C('transactions').deleteMany(statementQuery), C('statementImports').deleteMany(statementQuery),
         C('bankAccounts').deleteMany(statementQuery), C('businesses').deleteOne({ _id: businessId }),
-        C('users').deleteOne({ _id: user._id }),
+        C('users').deleteOne({ _id: user._id }), C('policyAcceptances').deleteMany({ userId: user._id }),
       ]);
       if (e.code === 11000) throw new HttpError(409, 'An account with this email already exists');
       throw e;
@@ -237,11 +274,14 @@ export function createApi(db, { secureCookies }) {
   }));
 
   r.post('/auth/demo', rateLimit({ key: 'demo-account', limit: 10, windowMs: 3600e3 }), wrap(async (req, res) => {
+    const accepted = acceptedCurrentPolicies(req.body?.acceptedPolicies);
+    if (!accepted) throw bad('Accept the current Morgan policies before creating a demo account.');
     const id = new ObjectId(), businessId = new ObjectId(), now = new Date();
-    const user = { _id: id, name: 'Morgan Demo User', email: `demo-${id}@example.invalid`, role: 'user', planId: 'starter', billingStatus: 'free', passwordHash: '', businessId, emailVerified: true, isDemo: true, createdAt: now };
+    const user = { _id: id, name: 'Morgan Demo User', email: `demo-${id}@example.invalid`, role: 'user', planId: 'starter', billingStatus: 'free', passwordHash: '', businessId, emailVerified: true, isDemo: true, policyVersionsAccepted: policyVersions, createdAt: now };
     const openingDate = today();
     const businessDoc = { _id: businessId, name: 'Northstar Creative Studio', currency: 'USD', timezone: 'America/New_York', invoicePrefix: 'DEMO-', invoiceSeq: 0, defaultTaxRateBps: 0, paymentTermsDays: 30, openingBalanceCents: 8426000, openingBalanceDate: openingDate, financialSetupComplete: true, onboardingStep: 4, isDemo: true, monthlyBudgetCents: 6000000, minimumCashCents: 1500000, cashAccounts: [{ _id: new ObjectId(), name: 'Operating account · simulated', type: 'checking', currency: 'USD', balanceCents: 8426000, balanceDate: openingDate, notes: 'Simulated demo data' }], ownerId: id, createdAt: now };
     await C('businesses').insertOne(businessDoc); await C('users').insertOne(user);
+    await C('policyAcceptances').insertMany(accepted.map((item) => ({ ...item, userId: id, acceptedAt: now, source: 'demo-registration', consentRecord: registrationConsentText })));
     const sample = [
       [addDays(openingDate, -32),'Retainer · Acme Studio',1250000],[addDays(openingDate, -28),'Payroll · Monthly',-2480000],[addDays(openingDate, -23),'Cloud software',-18400],[addDays(openingDate, -18),'Project milestone · Pine & Co',850000],[addDays(openingDate, -12),'Office and production',-324000],[addDays(openingDate, -6),'Retainer · Northstar Media',1620000],
     ];
@@ -341,8 +381,8 @@ export function createApi(db, { secureCookies }) {
     next();
   }));
 
-  r.get('/plans', (_req, res) => res.json({ plans, paidCheckoutAvailable: false, trialsAvailable: false }));
-  r.get('/usage', wrap(async (req, res) => res.json(await usageSummary(db, req.businessId, planFor(req)))));
+  r.get('/plans', (_req, res) => res.json({ plans, paidCheckoutAvailable: true, paymentMethod: 'paypal_me_manual', automaticBillingAvailable: false, trialsAvailable: false }));
+  r.get('/usage', wrap(async (req, res) => res.json(await usageSummary(db, req.businessId, planFor(req), new Date(), req.user._id))));
   r.use(wrap(async (req, _res, next) => {
     const b = await C('businesses').findOne({ _id: req.businessId }, { projection: { timezone: 1 } });
     req.today = todayIn(b?.timezone);
@@ -360,6 +400,105 @@ export function createApi(db, { secureCookies }) {
       C('invoices').countDocuments({}), C('bills').countDocuments({}), C('statementImports').countDocuments({}),
     ]);
     res.json({ users, businesses, transactions, invoices, bills, statementImports });
+  }));
+
+  // PayPal.Me is a one-time transfer. Entitlements are granted only after an administrator
+  // verifies the matching transaction in PayPal account activity.
+  r.post('/billing/checkouts', wrap(async (req, res) => {
+    const accepted = acceptedCurrentPolicies(req.body?.acceptedPolicies);
+    if (!accepted || req.body?.purchaseTermsAccepted !== true) throw bad('Accept the current Morgan policies and one-time payment terms before continuing to PayPal.');
+    const planId = oneOf(req.body?.planId, 'Plan', ['pro', 'max']);
+    const interval = oneOf(req.body?.interval, 'Billing interval', ['monthly', 'annual']);
+    const checkout = createCheckoutDetails({ planId, interval });
+    const reference = randomUUID();
+    const now = new Date();
+    const payment = { _id: reference, userId: req.user._id, businessId: req.businessId, email: req.user.email, customerName: req.user.name, planId, billingInterval: interval, amountCents: checkout.amountCents, currency: checkout.currency, provider: checkout.provider, paymentUrl: checkout.externalUrl, reference, status: 'awaiting_payment', autoRenew: checkout.autoRenew, policyAcceptances: accepted, policyAcceptedAt: now, purchaseTermsAccepted: true, purchaseTermsAcceptedAt: now, purchaseTermsVersion: manualPaymentTermsVersion, purchaseTermsText: manualPaymentTermsText, createdAt: now, updatedAt: now };
+    await C('planPayments').insertOne(payment);
+    try { await C('policyAcceptances').insertMany(accepted.map((item) => ({ ...item, userId: req.user._id, checkoutId: reference, acceptedAt: now, source: 'checkout', consentRecord: registrationConsentText }))); }
+    catch (error) { await C('planPayments').deleteOne({ _id: reference }); throw error; }
+    res.status(201).json({ reference, planId, billingInterval: interval, amountCents: payment.amountCents, currency: checkout.currency, paymentUrl: checkout.externalUrl, status: payment.status, autoRenew: checkout.autoRenew });
+  }));
+  r.get('/billing/checkouts', wrap(async (req, res) => {
+    const items = await C('planPayments').find({ userId: req.user._id }).sort({ createdAt: -1 }).toArray();
+    res.json(items.map(({ _id, userId, businessId, email, customerName, policyAcceptances, policyAcceptedAt, purchaseTermsAcceptedAt, purchaseTermsVersion, purchaseTermsText, purchaseTermsAccepted, transactionIdNormalized, ...item }) => ({ reference: String(_id), ...item })));
+  }));
+  r.post('/billing/checkouts/:id/transaction', wrap(async (req, res) => {
+    const payment = await C('planPayments').findOne({ _id: req.params.id, userId: req.user._id });
+    if (!payment) throw new HttpError(404, 'Payment request not found');
+    if (payment.status !== 'awaiting_payment') throw new HttpError(409, 'This payment request is no longer awaiting a transaction ID');
+    const transactionId = str(req.body?.transactionId, 'PayPal transaction ID', { required: true, min: 3, max: 120 });
+    const paypalIdentifier = str(req.body?.paypalIdentifier, 'PayPal username or account email', { required: true, min: 3, max: 254 });
+    if (paypalIdentifier.includes('@')) {
+      if (email(paypalIdentifier) !== paypalIdentifier.trim().toLowerCase()) throw bad('Enter a valid PayPal account email or PayPal.Me username.');
+    } else if (!/^[A-Za-z0-9._-]{3,64}$/.test(paypalIdentifier.replace(/^@/, ''))) throw bad('Enter a valid PayPal account email or PayPal.Me username.');
+    try {
+      const normalized = transactionId.trim().toUpperCase();
+      const submittedAt = new Date();
+      await C('paypalPaymentIdentifiers').insertOne({ paymentId: payment._id, userId: req.user._id, paypalIdentifier: paypalIdentifier.trim(), createdAt: submittedAt, purgeAt: new Date(submittedAt.getTime() + 90 * 24 * 3600e3) });
+      const result = await C('planPayments').updateOne({ _id: payment._id, userId: req.user._id, status: 'awaiting_payment', transactionId: { $exists: false } }, { $set: { transactionId: transactionId.trim(), transactionIdNormalized: normalized, transactionSubmittedAt: submittedAt, status: 'pending_verification', updatedAt: submittedAt } });
+      if (!result.modifiedCount) throw new HttpError(409, 'This payment request was already submitted');
+    } catch (error) { await C('paypalPaymentIdentifiers').deleteOne({ paymentId: payment._id, userId: req.user._id }); if (error.code === 11000) throw new HttpError(409, 'That PayPal transaction ID has already been submitted'); throw error; }
+    res.status(202).json({ ok: true, status: 'pending_verification' });
+  }));
+  r.get('/admin/payments', requireAdmin, wrap(async (_req, res) => {
+    const items = await C('planPayments').find({}).sort({ createdAt: -1 }).toArray();
+    const identifiers = await C('paypalPaymentIdentifiers').find({ paymentId: { $in: items.map((item) => item._id) } }).toArray();
+    const byPayment = new Map(identifiers.map((item) => [String(item.paymentId), item.paypalIdentifier]));
+    res.json(items.map(({ _id, userId, businessId, transactionIdNormalized, ...item }) => ({ id: String(_id), userId: String(userId), businessId: String(businessId), paypalIdentifier: byPayment.get(String(_id)) || null, ...item })));
+  }));
+  r.post('/admin/payments/:id/decision', requireAdmin, wrap(async (req, res) => {
+    const action = oneOf(req.body?.action, 'Decision', ['approve', 'reject']);
+    const payment = await C('planPayments').findOne({ _id: req.params.id, status: { $in: action === 'approve' ? ['pending_verification', 'verifying'] : ['pending_verification'] } });
+    if (!payment) throw new HttpError(409, 'Payment is not awaiting verification');
+    if (action === 'approve' && req.body?.verificationConfirmed !== true) throw bad('Confirm that PayPal shows a completed transaction for the matching customer and checkout, for the exact USD amount, paid to Morgan’s intended merchant account, and that the transaction has not been used before.');
+    const user = await C('users').findOne({ _id: payment.userId });
+    if (!user) throw new HttpError(404, 'Customer account no longer exists');
+    const now = new Date();
+    if (action === 'reject') {
+      const rejected = await C('planPayments').updateOne({ _id: payment._id, status: 'pending_verification' }, { $set: { status: 'rejected', verifiedAt: now, verifiedBy: req.user._id, updatedAt: now } });
+      if (!rejected.modifiedCount) throw new HttpError(409, 'Payment was already reviewed');
+      await C('adminAudit').updateOne({ _id: `manual-payment:${String(payment._id)}` }, { $setOnInsert: { adminUserId: req.user._id, action: 'manual_payment_reject', targetUserId: payment.userId, paymentId: payment._id, transactionId: payment.transactionId, amountCents: payment.amountCents, currency: payment.currency, before: { planId: accountPlan(user), billingStatus: user.billingStatus || 'free' }, after: { planId: accountPlan(user), paymentStatus: 'rejected' }, createdAt: now } }, { upsert: true });
+      return res.json({ ok: true, status: 'rejected' });
+    }
+    const claimed = await C('planPayments').updateOne({ _id: payment._id, status: 'pending_verification' }, { $set: { status: 'verifying', verifiedBy: req.user._id, verificationStartedAt: now, updatedAt: now } });
+    if (!claimed.modifiedCount && payment.status !== 'verifying') throw new HttpError(409, 'Payment was already reviewed');
+    if (action === 'approve') {
+      if (String(user.lastVerifiedPlanPaymentId || '') !== String(payment._id)) {
+        const currentEnd = user.billingStatus === 'active' && user.currentPeriodEnd > now ? new Date(user.currentPeriodEnd) : now;
+        const start = currentEnd > now ? currentEnd : now;
+        const end = addBillingInterval(start, payment.billingInterval);
+        const activated = await C('users').updateOne({ _id: user._id, lastVerifiedPlanPaymentId: { $ne: payment._id } }, { $set: { planId: payment.planId, billingStatus: 'active', billingInterval: payment.billingInterval, billingProvider: 'paypal_me_manual', currentPeriodStart: start, currentPeriodEnd: end, autoRenew: false, lastVerifiedPlanPaymentId: payment._id, updatedAt: now } });
+        if (!activated.modifiedCount) {
+          const latest = await C('users').findOne({ _id: user._id }, { projection: { lastVerifiedPlanPaymentId: 1 } });
+          if (String(latest?.lastVerifiedPlanPaymentId || '') !== String(payment._id)) throw new HttpError(409, 'Could not safely apply this payment; retry the verification action.');
+        }
+      }
+    }
+    await C('adminAudit').updateOne({ _id: `manual-payment:${String(payment._id)}` }, { $setOnInsert: { adminUserId: req.user._id, action: 'manual_payment_approve', targetUserId: payment.userId, paymentId: payment._id, transactionId: payment.transactionId, amountCents: payment.amountCents, currency: payment.currency, before: { planId: accountPlan(user), billingStatus: user.billingStatus || 'free' }, after: { planId: payment.planId, paymentStatus: 'approved' }, createdAt: now } }, { upsert: true });
+    await C('planPayments').updateOne({ _id: payment._id, status: 'verifying' }, { $set: { status: 'approved', verifiedAt: now, updatedAt: now } });
+    res.json({ ok: true, status: 'approved' });
+  }));
+  r.get('/admin/users', requireAdmin, wrap(async (_req, res) => {
+    const users = await C('users').find({}, { projection: { name: 1, email: 1, role: 1, planId: 1, billingStatus: 1, billingInterval: 1, currentPeriodEnd: 1, autoRenew: 1, createdAt: 1, businessId: 1 } }).sort({ createdAt: -1 }).toArray();
+    const month = new Date().toISOString().slice(0, 7);
+    const usageRows = await C('usagePeriods').find({ businessId: { $in: users.map((user) => user.businessId).filter(Boolean) }, month }, { projection: { businessId: 1, counters: 1 } }).toArray();
+    const usageByBusiness = new Map(usageRows.map((row) => [String(row.businessId), row.counters]));
+    res.json(users.map((user) => ({ id: String(user._id), name: user.name, email: user.email, role: user.role, planId: accountPlan(user), billingStatus: user.billingStatus === 'active' && user.currentPeriodEnd && new Date(user.currentPeriodEnd) <= new Date() ? 'expired' : user.billingStatus || 'free', billingInterval: user.billingInterval || null, currentPeriodEnd: user.currentPeriodEnd || null, autoRenew: user.autoRenew === true, createdAt: user.createdAt, usage: usageByBusiness.get(String(user.businessId)) || { financialRecords: 0, intelligenceRequests: 0, pdfReports: 0 } })));
+  }));
+  r.patch('/admin/users/:id/subscription', requireAdmin, wrap(async (req, res) => {
+    const planId = oneOf(req.body?.planId, 'Plan', ['starter', 'pro', 'max']);
+    const userId = oid(req.params.id);
+    const target = await C('users').findOne({ _id: userId });
+    if (!target) throw new HttpError(404, 'Customer account not found');
+    const now = new Date(), before = { planId: accountPlan(target), billingStatus: target.billingStatus || 'free' };
+    const after = planId === 'starter' ? { planId, billingStatus: 'free', autoRenew: false } : { planId, billingStatus: 'active', billingInterval: target.billingInterval || 'monthly', billingProvider: 'admin_manual', autoRenew: false, currentPeriodStart: now, currentPeriodEnd: new Date(now.getTime() + 30 * 24 * 3600e3) };
+    await C('users').updateOne({ _id: userId }, { $set: { ...after, updatedAt: now }, ...(planId === 'starter' ? { $unset: { billingInterval: '', billingProvider: '', currentPeriodStart: '', currentPeriodEnd: '' } } : {}) });
+    await C('adminAudit').insertOne({ adminUserId: req.user._id, action: 'admin_subscription_change', targetUserId: userId, before, after, createdAt: now });
+    res.json({ ok: true });
+  }));
+  r.get('/admin/billing-audit', requireAdmin, wrap(async (_req, res) => {
+    const [audit, events] = await Promise.all([C('adminAudit').find({}).sort({ createdAt: -1 }).limit(100).toArray(), C('usageEvents').find({ metric: 'intelligenceRequests' }).sort({ createdAt: -1 }).limit(200).project({ businessId: 1, month: 1, promptTokens: 1, outputTokens: 1, totalTokens: 1, estimatedCostMicros: 1, createdAt: 1 }).toArray()]);
+    res.json({ audit: audit.map(({ _id, adminUserId, targetUserId, ...item }) => ({ id: String(_id), adminUserId: String(adminUserId), targetUserId: targetUserId ? String(targetUserId) : null, ...item })), intelligence: events });
   }));
 
   /* ---------------- Account & business ---------------- */
@@ -401,6 +540,14 @@ export function createApi(db, { secureCookies }) {
   r.delete('/account', rateLimit({ key: 'delete-account', limit: 5, windowMs: 3600e3, failuresOnly: true }), wrap(async (req, res) => {
     if (!(await verifyPassword(String(req.body?.password || ''), req.user.passwordHash))) throw new HttpError(401, 'Password is incorrect');
     const q = { businessId: req.businessId };
+    const purgeAt = new Date(Date.now() + 90 * 24 * 3600e3);
+    await Promise.all([
+      C('paypalPaymentIdentifiers').updateMany({ userId: req.user._id }, { $min: { purgeAt } }),
+      C('policyAcceptances').updateMany({ userId: req.user._id }, { $set: { purgeAt } }),
+      C('planPayments').updateMany({ userId: req.user._id }, { $set: { purgeAt, updatedAt: new Date() } }),
+      C('planPayments').updateMany({ userId: req.user._id, status: { $in: ['awaiting_payment', 'pending_verification', 'verifying'] } }, { $set: { status: 'cancelled' } }),
+      C('adminAudit').updateMany({ targetUserId: req.user._id }, { $set: { purgeAt } }),
+    ]);
     await Promise.all(['transactions', 'invoices', 'customers', 'bills', 'planningItems', 'bankAccounts', 'statementImports', 'financialAudit', 'horizonScenarios', 'geminiThreads', 'usagePeriods', 'usageEvents', 'intelligenceRequests'].map((c) => C(c).deleteMany(q)));
     await C('sessions').deleteMany({ userId: req.user._id });
     await C('businesses').deleteOne({ _id: req.businessId });
@@ -1545,8 +1692,11 @@ export function createApi(db, { secureCookies }) {
     const cashCtx = await horizonContext(req);
     const forecast = horizonForecast({ ...cashCtx, today: now, startingCash: cashCtx.cash.balance });
     if (forecast.lowPoint && forecast.lowPoint.balanceCents < (biz.minimumCashCents || 0)) list.unshift({ id: 'cash-shortage', kind: 'cash-shortage', severity: 'high', title: 'Projected cash falls below your reserve', detail: `Base-case cash reaches ${formatMoney(forecast.lowPoint.balanceCents, biz.currency)} on ${forecast.lowPoint.date}, below your ${formatMoney(biz.minimumCashCents || 0, biz.currency)} reserve. This is an estimate from saved records and assumptions.`, amountCents: forecast.lowPoint.balanceCents, evidence: [], evidenceType: 'transaction' });
-    const ids = new Set(list.filter((i) => i.evidenceType === 'transaction').flatMap((i) => i.evidence));
-    res.json({ insights: list, transactions: txns.filter((t) => ids.has(String(t._id))).map(pub), recurring: A.recurringCharges(txns, now) });
+    const fullAccess = plans[planFor(req)].monitor === 'full';
+    const coreFindings = new Set(['overdue', 'late-bills', 'duplicate', 'cash-shortage']);
+    const visibleList = fullAccess ? list : list.filter((item) => coreFindings.has(item.kind));
+    const ids = new Set(visibleList.filter((i) => i.evidenceType === 'transaction').flatMap((i) => i.evidence));
+    res.json({ insights: visibleList, transactions: txns.filter((t) => ids.has(String(t._id))).map(pub), recurring: fullAccess ? A.recurringCharges(txns, now) : [] });
   }));
 
   r.get('/reports/pnl', wrap(async (req, res) => {

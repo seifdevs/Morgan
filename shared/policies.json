@@ -1,0 +1,672 @@
+[
+  {
+    "id": "privacy-policy",
+    "label": "Privacy Policy",
+    "slug": "privacy-policy",
+    "version": "2026-11-01",
+    "effectiveDate": "November 1, 2026",
+    "source": "Morgan Privacy Policy.docx",
+    "paragraphs": [
+      {
+        "kind": "heading",
+        "text": "Morgan Privacy Policy"
+      },
+      {
+        "kind": "paragraph",
+        "text": "Effective date: November 1, 2026 Last updated: November 1, 2026"
+      },
+      {
+        "kind": "heading",
+        "text": "1. About Morgan and this policy"
+      },
+      {
+        "kind": "paragraph",
+        "text": "Morgan is a financial intelligence service for businesses, operated from Egypt. This policy explains how we handle personal data when you visit morganhq.site, use the Morgan application, or contact us. It does not apply to websites or services run by other organisations, even where we link to them. You can reach us at management@morganhq.site."
+      },
+      {
+        "kind": "paragraph",
+        "text": "In this policy, a Customer is the business that holds a Morgan account, and a User is an individual who uses Morgan on a Customer’s behalf. A Workspace is the private area of Morgan where a Customer’s financial information is held. Customer Data means the financial and business information that a Customer or its Users enter or import into a Workspace, together with the outputs Morgan produces from it."
+      },
+      {
+        "kind": "heading",
+        "text": "2. Our role"
+      },
+      {
+        "kind": "paragraph",
+        "text": "We act in two capacities. For account details, billing records and our communications with you, we decide why and how the data is used, and we are responsible for it. For Customer Data, the Customer decides what is submitted and why, and we process it on the Customer’s behalf to provide Morgan."
+      },
+      {
+        "kind": "paragraph",
+        "text": "The distinction matters if you are an individual named in a Customer’s records, such as a client, supplier or contractor of that Customer. The Customer is primarily responsible for that information, so requests about it are best sent to the Customer first."
+      },
+      {
+        "kind": "heading",
+        "text": "3. Information we collect"
+      },
+      {
+        "kind": "heading",
+        "text": "Information you give us"
+      },
+      {
+        "kind": "paragraph",
+        "text": "When you register, we collect your name, email address and a password. You may also give us the name and profile details of your business."
+      },
+      {
+        "kind": "paragraph",
+        "text": "Most of what you give us is financial information about your business: accounts and balances, transactions, income and expenses, invoices and receivables, bills and payables, and the dates, amounts and descriptions attached to them. You enter these records yourself or upload files in .xlsx, .csv or .pdf format. Morgan works only from the records you provide and does not create transactions, balances or other figures to fill gaps in them."
+      },
+      {
+        "kind": "paragraph",
+        "text": "We also collect the questions you ask Morgan Intelligence and any messages you send us."
+      },
+      {
+        "kind": "heading",
+        "text": "Information Morgan calculates or generates"
+      },
+      {
+        "kind": "paragraph",
+        "text": "From your records, the Morgan application calculates balances and summaries, produces Monitor findings, builds Horizon forecasts and scenarios, stores the scenarios you choose to save, and generates downloadable PDF reports. These outputs are derived from your records and the assumptions applied to them. They are not independent statements of fact about your business, and their accuracy depends on how complete and correct your records are."
+      },
+      {
+        "kind": "paragraph",
+        "text": "Morgan Intelligence produces written explanations in response to your questions. These are AI-generated interpretations of figures the application has already calculated, as Section 6 explains."
+      },
+      {
+        "kind": "heading",
+        "text": "Billing information"
+      },
+      {
+        "kind": "paragraph",
+        "text": "We keep a record of your selected plan, billing frequency and payment status, and of the payments, changes and cancellations connected with your subscription."
+      },
+      {
+        "kind": "heading",
+        "text": "4. Other people’s information in your records"
+      },
+      {
+        "kind": "paragraph",
+        "text": "Customer Data will often include information about people other than you, such as the names of clients and suppliers, contractor payments or payroll costs. Customers are responsible for having the authority and a lawful basis to submit that information to Morgan, and for giving any notices those people are entitled to. Submitting information to Morgan does not make it lawful to process, so please do not enter personal information you have no right to share."
+      },
+      {
+        "kind": "heading",
+        "text": "5. How we use information"
+      },
+      {
+        "kind": "paragraph",
+        "text": "We use personal data to operate Morgan. That means creating and maintaining accounts and authenticating Users; organising Customer Data and producing calculations, Monitor findings, Horizon forecasts, saved scenarios and reports; providing Morgan Intelligence responses; and managing subscriptions and keeping records of payments."
+      },
+      {
+        "kind": "paragraph",
+        "text": "We also use it to protect the service and its Customers from unauthorised access, fraud and abuse; to investigate faults and keep the service running; to communicate with you about your account, billing and changes to the service; and to meet legal obligations and establish or defend legal claims."
+      },
+      {
+        "kind": "heading",
+        "text": "6. Morgan Intelligence and Google Gemini"
+      },
+      {
+        "kind": "paragraph",
+        "text": "Morgan Intelligence is powered by Google’s Gemini models. Morgan’s servers send requests to Google; your browser does not communicate with Google for this purpose. Information therefore does leave Morgan’s own systems when you use Morgan Intelligence."
+      },
+      {
+        "kind": "paragraph",
+        "text": "When you ask a question, we send Gemini the text of your question together with the financial context needed to answer it. That context comes from your Workspace and can include the financial records and outputs described in Section 3."
+      },
+      {
+        "kind": "paragraph",
+        "text": "Morgan’s application performs the financial calculations. Gemini explains and interprets figures the application has already produced, and is not the source of those figures. Its responses can be wrong, incomplete or misleading, so please check anything important against your own records, and with a qualified professional where appropriate, before relying on it."
+      },
+      {
+        "kind": "paragraph",
+        "text": "Google handles data sent to the Gemini API under its own terms and privacy documentation."
+      },
+      {
+        "kind": "heading",
+        "text": "7. Payments"
+      },
+      {
+        "kind": "paragraph",
+        "text": "Paid plans are currently paid by PayPal transfer. PayPal collects and processes your payment details under its own privacy policy. We keep records of the payments we receive, as described in Section 3."
+      },
+      {
+        "kind": "heading",
+        "text": "8. Who we share information with"
+      },
+      {
+        "kind": "paragraph",
+        "text": "We share personal data with the service providers who help us run Morgan, and only as far as needed for what they do for us. We may also disclose information where the law requires it, to protect the rights, safety or security of Morgan or others, or in connection with a merger, financing or sale of the business."
+      },
+      {
+        "kind": "paragraph",
+        "text": "Our current providers are:"
+      },
+      {
+        "kind": "paragraph",
+        "text": "Provider"
+      },
+      {
+        "kind": "paragraph",
+        "text": "Role"
+      },
+      {
+        "kind": "paragraph",
+        "text": "Information involved"
+      },
+      {
+        "kind": "paragraph",
+        "text": "Google (Gemini API)"
+      },
+      {
+        "kind": "paragraph",
+        "text": "AI interpretation for Morgan Intelligence"
+      },
+      {
+        "kind": "paragraph",
+        "text": "Your questions and the financial context described in Section 6"
+      },
+      {
+        "kind": "paragraph",
+        "text": "PayPal"
+      },
+      {
+        "kind": "paragraph",
+        "text": "Receiving subscription payments"
+      },
+      {
+        "kind": "paragraph",
+        "text": "Payment details and payment records"
+      },
+      {
+        "kind": "paragraph",
+        "text": "Vercel"
+      },
+      {
+        "kind": "paragraph",
+        "text": "Application hosting"
+      },
+      {
+        "kind": "paragraph",
+        "text": "Data processed by the application"
+      },
+      {
+        "kind": "paragraph",
+        "text": "MongoDB"
+      },
+      {
+        "kind": "paragraph",
+        "text": "Database"
+      },
+      {
+        "kind": "paragraph",
+        "text": "Account details and Customer Data"
+      },
+      {
+        "kind": "heading",
+        "text": "9. International processing"
+      },
+      {
+        "kind": "paragraph",
+        "text": "Morgan is operated from Egypt, and our customers are initially in the United States. Our providers may process data in countries outside Egypt and outside your country of residence, so personal data you submit may be transferred across borders and handled under data protection laws that differ from those where you live."
+      },
+      {
+        "kind": "heading",
+        "text": "10. Security"
+      },
+      {
+        "kind": "paragraph",
+        "text": "We use technical and organisational measures to protect personal data. No system can be made immune to attack, and we cannot guarantee that unauthorised access will never occur. You can help by keeping your credentials confidential and telling us promptly at management@morganhq.site if you suspect your account has been misused. If a security incident affects personal data we hold, we will notify affected Customers and the authorities as the applicable law requires."
+      },
+      {
+        "kind": "heading",
+        "text": "11. Retention and account deletion"
+      },
+      {
+        "kind": "paragraph",
+        "text": "We keep the data we need to provide Morgan until you delete your account, which you can do from your dashboard. Other data we hold is deleted within 90 days. We may keep information for longer where the law requires it, or where we need it to resolve a dispute."
+      },
+      {
+        "kind": "heading",
+        "text": "12. Your rights"
+      },
+      {
+        "kind": "paragraph",
+        "text": "The rights you have depend on where you live and on our role in relation to the data. Egyptian data protection law gives individuals the right to know what data is held about them, to access and correct it, to withdraw consent, to have it erased, and to restrict or object to its processing, subject to the conditions in the law. Residents of other countries and some US states have comparable rights under their own laws."
+      },
+      {
+        "kind": "paragraph",
+        "text": "To make a request, write to management@morganhq.site. We may need to verify your identity first. If your information sits in a Customer’s Workspace, we may refer you to that Customer, since it controls that data, and we will help it respond. If you are not satisfied with our response, you may complain to your data protection authority, which in Egypt is the Personal Data Protection Centre."
+      },
+      {
+        "kind": "heading",
+        "text": "13. Who can use Morgan"
+      },
+      {
+        "kind": "paragraph",
+        "text": "Morgan is a business service. You must be 18 or older, or of legal age where you live, to use it. It is not directed to children, and we do not knowingly collect personal data from them. If you believe a child has given us personal data, please contact us and we will delete it."
+      },
+      {
+        "kind": "heading",
+        "text": "14. Changes to this policy"
+      },
+      {
+        "kind": "paragraph",
+        "text": "We will post any updated policy on this page with a new last-updated date, and we will notify account holders of material changes."
+      },
+      {
+        "kind": "heading",
+        "text": "15. Contact"
+      },
+      {
+        "kind": "paragraph",
+        "text": "For privacy questions and requests, write to management@morganhq.site."
+      }
+    ]
+  },
+  {
+    "id": "refund-policy",
+    "label": "Refund Policy",
+    "slug": "refund-policy",
+    "version": "2026-11-01",
+    "effectiveDate": "November 1, 2026",
+    "source": "Morgan Refund Policy.docx",
+    "paragraphs": [
+      {
+        "kind": "heading",
+        "text": "Morgan Refund Policy"
+      },
+      {
+        "kind": "paragraph",
+        "text": "Effective date: November 1, 2026 Last updated: November 1, 2026"
+      },
+      {
+        "kind": "paragraph",
+        "text": "In short: you can get a full refund of your first payment for a paid plan if you ask within 14 days. A duplicate or incorrect charge is always refunded. Other payments are generally not refundable, with the exceptions in Section 4."
+      },
+      {
+        "kind": "heading",
+        "text": "1. Scope"
+      },
+      {
+        "kind": "paragraph",
+        "text": "This policy applies to the paid Morgan plans, Pro and Max, whether you pay monthly or annually. The Starter plan is free, so there is nothing to refund. This policy forms part of our Terms of Use, and the terms defined there have the same meaning here."
+      },
+      {
+        "kind": "heading",
+        "text": "2. Refund of your first payment"
+      },
+      {
+        "kind": "paragraph",
+        "text": "You can ask for a full refund of the first payment you make for a paid plan, as long as you ask within 14 days of that payment. You do not need to give a reason. This applies to monthly and annual plans alike, and is available once for each Customer."
+      },
+      {
+        "kind": "paragraph",
+        "text": "When we refund this payment, your paid plan ends."
+      },
+      {
+        "kind": "heading",
+        "text": "3. Duplicate or incorrect charges"
+      },
+      {
+        "kind": "paragraph",
+        "text": "If you are charged twice for the same period, or charged an amount that does not match the price of your plan, we will refund the extra amount in full, however long ago it was paid. Please tell us as soon as you notice."
+      },
+      {
+        "kind": "heading",
+        "text": "4. All other payments"
+      },
+      {
+        "kind": "paragraph",
+        "text": "Once the 14 days have passed, and for each later monthly or annual payment, payments are not refundable. That includes the unused part of a period you have already paid for, and it applies whether you delete your account, move to a different plan or simply stop using Morgan."
+      },
+      {
+        "kind": "paragraph",
+        "text": "There are three exceptions. We will make a refund where the law that applies to you requires one. We will refund the affected period if Morgan is unavailable to you for a significant time for reasons within our control. And we will make a refund where we have agreed to one with you in writing."
+      },
+      {
+        "kind": "heading",
+        "text": "5. How to ask"
+      },
+      {
+        "kind": "paragraph",
+        "text": "Write to management@morganhq.site from the email address on your account. Please include your PayPal payment reference and say which of the cases above you are relying on. We will reply with our decision and, if we cannot refund, the reason."
+      },
+      {
+        "kind": "heading",
+        "text": "6. How refunds are paid"
+      },
+      {
+        "kind": "paragraph",
+        "text": "We refund the amount you paid through PayPal, to the PayPal account that sent the payment. How quickly the money reaches you after we send it depends on PayPal and your bank, which we do not control."
+      },
+      {
+        "kind": "heading",
+        "text": "7. Disputes"
+      },
+      {
+        "kind": "paragraph",
+        "text": "Please contact us before opening a dispute with PayPal, because we can usually put a problem right faster directly. If a dispute is opened, we may restrict the account concerned while it is reviewed, and we will give PayPal the records of your payment and your use of Morgan."
+      },
+      {
+        "kind": "heading",
+        "text": "8. Changes to this policy"
+      },
+      {
+        "kind": "paragraph",
+        "text": "We may update this policy from time to time. The updated version will be posted on this page with a new last-updated date. A change does not affect a payment you made before it took effect."
+      },
+      {
+        "kind": "heading",
+        "text": "9. Contact"
+      },
+      {
+        "kind": "paragraph",
+        "text": "For questions about refunds, write to management@morganhq.site."
+      }
+    ]
+  },
+  {
+    "id": "terms-of-use",
+    "label": "Terms of Use",
+    "slug": "terms-of-use",
+    "version": "2026-11-01",
+    "effectiveDate": "November 1, 2026",
+    "source": "Morgan Terms of Use.docx",
+    "paragraphs": [
+      {
+        "kind": "heading",
+        "text": "Morgan Terms of Use"
+      },
+      {
+        "kind": "paragraph",
+        "text": "Effective date: November 1, 2026 Last updated: November 1, 2026"
+      },
+      {
+        "kind": "paragraph",
+        "text": "In short: Morgan helps you understand your business finances, but it works from the records you give it, its forecasts are estimates, and you stay responsible for your data and your decisions. Please read the full Terms below."
+      },
+      {
+        "kind": "heading",
+        "text": "1. Agreement"
+      },
+      {
+        "kind": "paragraph",
+        "text": "These Terms of Use govern your access to and use of Morgan, including morganhq.site and the Morgan application. Morgan is operated from Egypt. By creating an account or using Morgan, you agree to these Terms, our Privacy Policy and our Refund Policy. If you use Morgan on behalf of a business, you confirm that you have authority to bind that business, and “you” then means the business as well as you personally. If you do not agree, please do not use Morgan."
+      },
+      {
+        "kind": "paragraph",
+        "text": "In these Terms, “we”, “us” and “Morgan” mean the operator of Morgan. A Customer is the business that holds a Morgan account, a User is an individual who uses Morgan on a Customer’s behalf, and a Workspace is the private area of Morgan where a Customer’s financial information is held. Customer Data means the financial and business information that a Customer or its Users enter or import into a Workspace, together with the outputs Morgan produces from it."
+      },
+      {
+        "kind": "heading",
+        "text": "2. What Morgan does"
+      },
+      {
+        "kind": "paragraph",
+        "text": "Morgan is a business financial intelligence service. It organises the financial records you provide, identifies changes and unusual activity in them, forecasts possible future cash positions, and explains the results."
+      },
+      {
+        "kind": "paragraph",
+        "text": "The service has four parts. Financial Core holds your accounts, transactions, invoices, bills and related records. Monitor reviews those records for changes, overdue receivables and patterns worth your attention. Horizon produces forecasts and scenario simulations, which you can save. Morgan Intelligence uses Google’s Gemini models to explain and answer questions about your financial information. Morgan can also produce downloadable PDF reports."
+      },
+      {
+        "kind": "paragraph",
+        "text": "Morgan works from the records you enter or upload. It does not connect to your bank or other accounts on its own, and it does not add transactions or balances to complete your records."
+      },
+      {
+        "kind": "heading",
+        "text": "3. Eligibility and accounts"
+      },
+      {
+        "kind": "paragraph",
+        "text": "You must be 18 or older, or of legal age where you live, to use Morgan. Morgan is intended for business use."
+      },
+      {
+        "kind": "paragraph",
+        "text": "When you register, you must give accurate information and keep it up to date. You are responsible for keeping your login credentials confidential and for everything done through your account. Tell us promptly at management@morganhq.site if you suspect your account has been accessed without permission."
+      },
+      {
+        "kind": "heading",
+        "text": "4. Your responsibilities"
+      },
+      {
+        "kind": "paragraph",
+        "text": "You are responsible for the Customer Data you submit. You confirm that you have the right and authority to submit it to Morgan, that it is lawful for you to do so, and that you have given any notices and obtained any permissions required where it concerns employees, clients, contractors, suppliers or other individuals."
+      },
+      {
+        "kind": "paragraph",
+        "text": "Morgan’s outputs depend on your records. You are responsible for the accuracy and completeness of what you enter, for keeping your own copies of your financial records, and for reviewing forecasts, findings and AI explanations before you rely on them. You are also responsible for your business decisions and for complying with the laws that apply to you when you use Morgan."
+      },
+      {
+        "kind": "heading",
+        "text": "5. Acceptable use"
+      },
+      {
+        "kind": "paragraph",
+        "text": "You may not use Morgan to break the law or to harm others. In particular, you may not:"
+      },
+      {
+        "kind": "paragraph",
+        "text": "access or try to access another customer’s information, or any account, system or part of Morgan you are not authorised to use;"
+      },
+      {
+        "kind": "paragraph",
+        "text": "bypass access controls, usage limits or subscription restrictions;"
+      },
+      {
+        "kind": "paragraph",
+        "text": "interfere with or disrupt Morgan, or probe, scan or test its security without our written permission;"
+      },
+      {
+        "kind": "paragraph",
+        "text": "introduce malware or other harmful code;"
+      },
+      {
+        "kind": "paragraph",
+        "text": "scrape, extract or copy data from Morgan by automated means, or abuse any interface to it;"
+      },
+      {
+        "kind": "paragraph",
+        "text": "share your credentials or let others use your account;"
+      },
+      {
+        "kind": "paragraph",
+        "text": "upload data you have no right to use, or use Morgan in a way that infringes anyone’s intellectual property or privacy rights; or"
+      },
+      {
+        "kind": "paragraph",
+        "text": "use Morgan for fraud or any unlawful purpose."
+      },
+      {
+        "kind": "heading",
+        "text": "6. Your data"
+      },
+      {
+        "kind": "paragraph",
+        "text": "You keep all rights in your Customer Data. You give us permission to host, process, copy and display it, and to send relevant parts of it to our service providers, only as needed to provide Morgan to you, including to generate calculations, findings, forecasts, reports and Morgan Intelligence responses. How we handle personal data is described in our Privacy Policy."
+      },
+      {
+        "kind": "paragraph",
+        "text": "Outputs that Morgan generates from your Customer Data, such as reports and saved scenarios, are yours to use for your business."
+      },
+      {
+        "kind": "heading",
+        "text": "7. Our rights in Morgan"
+      },
+      {
+        "kind": "paragraph",
+        "text": "Morgan, including its software, design, brand and underlying technology, belongs to us and our licensors. We give you a limited, non-exclusive, non-transferable right to use Morgan for your business while these Terms apply. You may not copy, modify, reverse engineer or resell Morgan, or use our name or branding, without our written permission. If you send us feedback, we may use it to improve Morgan without obligation to you."
+      },
+      {
+        "kind": "heading",
+        "text": "8. Forecasts and AI"
+      },
+      {
+        "kind": "paragraph",
+        "text": "Morgan helps you understand your finances and plan. It is not a bank, accountant, tax adviser, lawyer, investment adviser or other regulated professional, and it does not audit or verify your records. Nothing in Morgan is professional accounting, tax, legal or investment advice, and you should consult a qualified professional for those matters."
+      },
+      {
+        "kind": "paragraph",
+        "text": "Horizon forecasts are estimates built from your records and stated assumptions. Actual results can differ, because records can be incomplete, circumstances change and assumptions do not always hold. We do not guarantee profitability, revenue, cash availability or the outcome of any decision you make using Morgan."
+      },
+      {
+        "kind": "paragraph",
+        "text": "Morgan’s application performs the financial calculations. Morgan Intelligence, which is powered by Google’s Gemini, explains and interprets the results and is not the source of the figures. Its responses can be wrong, incomplete or misleading. Please check anything important before acting on it."
+      },
+      {
+        "kind": "heading",
+        "text": "9. Plans, payment and refunds"
+      },
+      {
+        "kind": "paragraph",
+        "text": "Morgan offers the following plans:"
+      },
+      {
+        "kind": "paragraph",
+        "text": "Plan"
+      },
+      {
+        "kind": "paragraph",
+        "text": "Monthly"
+      },
+      {
+        "kind": "paragraph",
+        "text": "Annual"
+      },
+      {
+        "kind": "paragraph",
+        "text": "Starter"
+      },
+      {
+        "kind": "paragraph",
+        "text": "Free"
+      },
+      {
+        "kind": "paragraph",
+        "text": "Free"
+      },
+      {
+        "kind": "paragraph",
+        "text": "Pro"
+      },
+      {
+        "kind": "paragraph",
+        "text": "$49.99"
+      },
+      {
+        "kind": "paragraph",
+        "text": "$499"
+      },
+      {
+        "kind": "paragraph",
+        "text": "Max"
+      },
+      {
+        "kind": "paragraph",
+        "text": "$199.99"
+      },
+      {
+        "kind": "paragraph",
+        "text": "$1,499"
+      },
+      {
+        "kind": "paragraph",
+        "text": "The features and limits of each plan are as shown on morganhq.site."
+      },
+      {
+        "kind": "paragraph",
+        "text": "If you choose a paid plan, you agree to pay the price shown for that plan and billing option. Paid plans are currently paid by PayPal transfer, and PayPal’s own terms apply to the transfer. If we change a price, the new price will apply only from the next period you pay for, and we will tell you before it takes effect."
+      },
+      {
+        "kind": "paragraph",
+        "text": "Refunds are covered by our Refund Policy, which forms part of these Terms."
+      },
+      {
+        "kind": "heading",
+        "text": "10. Third-party services"
+      },
+      {
+        "kind": "paragraph",
+        "text": "Morgan relies on third-party providers, including Google for Morgan Intelligence and PayPal for payments. Their services are governed by their own terms, and we are not responsible for how they run their services. Our Privacy Policy lists the providers we use and explains what they receive."
+      },
+      {
+        "kind": "heading",
+        "text": "11. Ending your use of Morgan"
+      },
+      {
+        "kind": "paragraph",
+        "text": "You can delete your account at any time from your dashboard. What happens to your data afterwards is described in our Privacy Policy. Deleting your account does not by itself entitle you to a refund, as our Refund Policy explains."
+      },
+      {
+        "kind": "paragraph",
+        "text": "We may suspend or close an account if you break these Terms, if your use puts Morgan or other customers at risk, or if the law requires. Where it is reasonable to do so, we will tell you why and give you a chance to put things right first. Provisions that by their nature should continue after your account ends, including Sections 7, 13, 14, 15 and 16, will do so."
+      },
+      {
+        "kind": "heading",
+        "text": "12. Changes and availability"
+      },
+      {
+        "kind": "paragraph",
+        "text": "Morgan is an early-stage product and will change. We may add, change or remove features. We aim to keep Morgan available, but we cannot promise that it will always be uninterrupted or free of errors."
+      },
+      {
+        "kind": "heading",
+        "text": "13. Disclaimers"
+      },
+      {
+        "kind": "paragraph",
+        "text": "Except where the law does not allow it, Morgan is provided “as is” and “as available”, and we do not give any warranty that it will be accurate, uninterrupted, error-free or fit for a particular purpose. Nothing in these Terms limits any rights you have under law that cannot be excluded."
+      },
+      {
+        "kind": "heading",
+        "text": "14. Limits on our liability"
+      },
+      {
+        "kind": "paragraph",
+        "text": "To the extent the law allows, we are not liable for indirect or consequential loss, or for loss of profits, revenue, data or business opportunity, arising from your use of Morgan or from decisions you make using its outputs. To the extent the law allows, our total liability to you for any claim connected with Morgan is limited to the amount you paid us for Morgan in the twelve months before the claim arose. Nothing in these Terms excludes or limits liability that cannot be excluded or limited by law."
+      },
+      {
+        "kind": "heading",
+        "text": "15. Your responsibility to us"
+      },
+      {
+        "kind": "paragraph",
+        "text": "You are responsible for claims, losses and costs we incur because of Customer Data you had no right to submit, or because of your breach of these Terms, to the extent the law allows."
+      },
+      {
+        "kind": "heading",
+        "text": "16. Governing law and disputes"
+      },
+      {
+        "kind": "paragraph",
+        "text": "These Terms, and any dispute arising out of or in connection with them or with Morgan, are governed by the laws of Egypt. This does not remove any right you have under mandatory law where you live."
+      },
+      {
+        "kind": "paragraph",
+        "text": "If you have a concern about Morgan, please write to us first at management@morganhq.site so we can try to resolve it informally."
+      },
+      {
+        "kind": "heading",
+        "text": "17. General"
+      },
+      {
+        "kind": "paragraph",
+        "text": "These Terms, together with our Privacy Policy and Refund Policy, are the whole agreement between you and us about Morgan. If any part of them cannot be enforced, the rest still applies. If we do not enforce a right straight away, we have not given it up. You may not transfer your rights under these Terms without our written permission. We may contact you by email at the address on your account, and you can contact us at management@morganhq.site."
+      },
+      {
+        "kind": "heading",
+        "text": "18. Changes to these Terms"
+      },
+      {
+        "kind": "paragraph",
+        "text": "We may update these Terms from time to time. We will post the updated version on this page with a new last-updated date, and we will notify account holders of material changes. If you keep using Morgan after a change takes effect, you accept the updated Terms."
+      },
+      {
+        "kind": "heading",
+        "text": "19. Contact"
+      },
+      {
+        "kind": "paragraph",
+        "text": "For questions about these Terms, write to management@morganhq.site."
+      }
+    ]
+  }
+]

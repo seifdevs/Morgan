@@ -12,6 +12,7 @@ import Home from './pages/public/Home';
 import { AgencyPage } from './pages/public/AgencyPages';
 import { About, Contact, Faq, Features, NotFound, Pricing, ResourceDetail, Resources } from './pages/public/Pages';
 import { Auth, ForgotPassword, ResetPassword, VerifyEmail } from './pages/public/Auth';
+import Policy from './pages/public/Policy';
 import { Logout, RequireAdminRoute, RequireAuth } from './pages/app/AppLayout';
 import './styles/base.css';
 import './styles/public.css';
@@ -71,6 +72,7 @@ const app = (
               <Route path="resources/:slug" element={<ResourceDetail />} />
               <Route path="faq" element={<Faq />} />
               <Route path="contact" element={<Contact />} />
+              <Route path="policies/:slug" element={<Policy />} />
               <Route path="*" element={<NotFound />} />
             </Route>
             <Route path="login" element={<Auth mode="login" />} />

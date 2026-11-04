@@ -54,6 +54,18 @@
       "destination": "/seo-pages/contact.html"
     },
     {
+      "source": "/policies/terms-of-use",
+      "destination": "/seo-pages/policies-terms-of-use.html"
+    },
+    {
+      "source": "/policies/privacy-policy",
+      "destination": "/seo-pages/policies-privacy-policy.html"
+    },
+    {
+      "source": "/policies/refund-policy",
+      "destination": "/seo-pages/policies-refund-policy.html"
+    },
+    {
       "source": "/agency-financial-management",
       "destination": "/seo-pages/agency-financial-management.html"
     },

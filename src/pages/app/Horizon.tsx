@@ -1,4 +1,4 @@
-import { useMemo, useState, type FormEvent } from 'react';
+import { useMemo, useRef, useState, type FormEvent } from 'react';
 import { Link } from 'react-router-dom';
 import { api, type GeminiAnswer, type Horizon as HorizonData, type HorizonScenario, type ScenarioAssumption } from '../../lib/api';
 import { ChartFrame, LineChart } from '../../components/charts/charts';
@@ -12,6 +12,7 @@ const kinds: { value: ScenarioAssumption['type']; label: string }[] = [
   { value: 'hire', label: 'Hire a team member' }, { value: 'lost-client', label: 'Lose a client' }, { value: 'delayed-payments', label: 'Delay client payments' },
   { value: 'new-client', label: 'Add a new client' }, { value: 'increased-expense', label: 'Increase recurring expenses' }, { value: 'large-purchase', label: 'Make a large purchase' },
 ];
+const resetDate = (iso: string) => new Intl.DateTimeFormat('en', { dateStyle: 'long', timeStyle: 'short', timeZone: 'UTC' }).format(new Date(iso)) + ' UTC';
 type ChatLine = { role: 'user'|'assistant'; text: string; recommendations?: string[]; evidence?: GeminiAnswer['evidence'] };
 
 export default function Horizon() {
@@ -24,7 +25,7 @@ export default function Horizon() {
   const path = `/horizon?days=${period}${scenarioId ? `&scenarioId=${encodeURIComponent(scenarioId)}` : ''}`;
   const horizon = useApi<HorizonData>(path);
   const scenarios = useApi<HorizonScenario[]>('/horizon/scenarios');
-  const usage = useApi<{ capabilities: { forecastDays: number; scenariosPerWorkspace: { used: number; limit: number } } }>('/usage');
+  const usage = useApi<{ capabilities: { forecastDays: number; scenariosPerWorkspace: { used: number; limit: number } }; usage: { intelligenceRequests: { used: number; limit: number; remaining: number } }; period: { resetsAt: string } }>('/usage');
   const [showScenario, setShowScenario] = useState(false);
   const [editingId, setEditingId] = useState('');
   const [scenarioName, setScenarioName] = useState('');
@@ -37,6 +38,7 @@ export default function Horizon() {
   const [chat, setChat] = useState<ChatLine[]>([]);
   const [chatError, setChatError] = useState('');
   const [chatBusy, setChatBusy] = useState(false);
+  const pendingChatRequest = useRef<{ question: string; requestId: string } | null>(null);
   const data = horizon.data;
   const maxDays = usage.data?.capabilities.forecastDays || 30;
   const scenarioLimit = usage.data?.capabilities.scenariosPerWorkspace;
@@ -71,7 +73,7 @@ export default function Horizon() {
     setAmountInputs(item.assumptions.map((a) => a.amountCents ? centsToInput(a.amountCents) : ''));
   }
   function updateAssumption(index: number, patch: Partial<ScenarioAssumption>) { setAssumptions((current) => current.map((a, i) => i === index ? { ...a, ...patch } : a)); }
-  function selectScenario(id: string) { setScenarioId(id); setThreadId(''); setChat([]); setChatError(''); }
+  function selectScenario(id: string) { setScenarioId(id); setThreadId(''); setChat([]); setChatError(''); pendingChatRequest.current = null; }
   async function saveScenario(e: FormEvent) {
     e.preventDefault(); setScenarioError(''); setBusy(true);
     const prepared = assumptions.map((a, i) => ({ ...a, amountCents: a.type === 'delayed-payments' ? undefined : toCents(amountInputs[i] || '') }));
@@ -90,10 +92,15 @@ export default function Horizon() {
   }
   async function ask(e: FormEvent) {
     e.preventDefault(); if (!question.trim()) return;
-    const text = question.trim(); setQuestion(''); setChatError(''); setChatBusy(true); setChat((rows) => [...rows, { role: 'user', text }]);
+    const text = question.trim(), retrying = pendingChatRequest.current?.question === text;
+    setQuestion(''); setChatError(''); setChatBusy(true);
+    if (!retrying) setChat((rows) => [...rows, { role: 'user', text }]);
+    const requestId = retrying ? pendingChatRequest.current!.requestId : crypto.randomUUID();
+    pendingChatRequest.current = { question: text, requestId };
     try {
-      const answer = await api<GeminiAnswer>('/gemini/ask', { method: 'POST', body: { question: text, requestId: crypto.randomUUID(), ...(threadId && { threadId }), ...(scenarioId && { scenarioId }) } });
-      setThreadId(answer.threadId); setChat((rows) => [...rows, { role: 'assistant', text: answer.answer, recommendations: answer.recommendations, evidence: answer.evidence }]);
+      const answer = await api<GeminiAnswer>('/gemini/ask', { method: 'POST', body: { question: text, requestId, ...(threadId && { threadId }), ...(scenarioId && { scenarioId }) } });
+      if (pendingChatRequest.current?.requestId === requestId) pendingChatRequest.current = null;
+      setThreadId(answer.threadId); setChat((rows) => [...rows, { role: 'assistant', text: answer.answer, recommendations: answer.recommendations, evidence: answer.evidence }]); usage.reload();
     } catch (e) { setChatError((e as Error).message); }
     finally { setChatBusy(false); }
   }
@@ -131,10 +138,11 @@ export default function Horizon() {
         </section>
       </div>
       <section className="panel section-gap"><div className="panel-head"><div><h2>Scheduled cash movements</h2><p>Base estimates probability-weight client receipts and saved expectations. Bills are included in full.</p></div></div><div className="table-wrap"><table className="table"><thead><tr><th>Date</th><th>Source</th><th>Movement</th><th>Confidence and timing</th><th className="r">Base estimate</th></tr></thead><tbody>{data.events.length ? data.events.filter((e) => e.date <= data.forecasts.base[period - 1]?.date).map((event, index) => <tr key={`${event.type}-${event.id}-${event.date}-${index}`}><td>{formatDate(event.date)}</td><td><span className="badge estimate">{event.type}</span></td><td><b>{event.label}</b></td><td>{event.confidence === 'scenario' ? 'Scenario input' : event.confidence}{event.paymentPrediction && <small className="sub">{event.paymentPrediction.observations ? `${event.paymentPrediction.delayDays > 0 ? '+' : ''}${event.paymentPrediction.delayDays} days vs due date · ${event.paymentPrediction.observations} prior paid` : 'Due date used · no paid history'}</small>}</td><td className={`amount ${event.projectedAmountCents > 0 ? 'pos' : ''}`}>{money(event.projectedAmountCents, { sign: true })}</td></tr>) : <tr><td colSpan={5} className="muted">No invoice, bill or saved plan movements in this period. Run-rate remains a separate estimate.</td></tr>}</tbody></table></div></section>
-      <section className="panel section-gap horizon-gemini"><div className="panel-head"><div><h2>Ask Morgan</h2><p>Gemini explains the records and calculations shown above. It cannot change your financial data.</p></div><span className="badge estimate">AI explanation</span></div>
+      <section className="panel section-gap horizon-gemini"><div className="panel-head"><div><h2>Ask Morgan</h2><p>Gemini explains the records and calculations shown above. It cannot change your financial data.</p>{usage.data?.usage.intelligenceRequests && <p className="muted">{usage.data.usage.intelligenceRequests.used} of {usage.data.usage.intelligenceRequests.limit} messages used this month · resets {resetDate(usage.data.period.resetsAt)}</p>}</div><span className="badge estimate">AI explanation</span></div>
+        {usage.data?.usage.intelligenceRequests && usage.data.usage.intelligenceRequests.used / usage.data.usage.intelligenceRequests.limit >= .8 && <div className="callout info" role="status"><Icon name="alert" size={16} /><span>{usage.data.usage.intelligenceRequests.remaining === 0 ? 'Your monthly Morgan Intelligence allowance is used. It resets at the start of next month; you can review plan options.' : 'You have used at least 80% of this month’s Morgan Intelligence allowance.'}</span>{usage.data.usage.intelligenceRequests.remaining === 0 && <Link className="link" to="/app/usage">Plan & usage</Link>}</div>}
         <div className="gemini-thread" aria-live="polite">{chat.length ? chat.map((line, i) => <div key={`${i}-${line.role}`} className={`gemini-message ${line.role}`}><b>{line.role === 'user' ? 'You' : 'Morgan'}</b><p>{line.text}</p>{line.recommendations?.length ? <ul>{line.recommendations.map((rec) => <li key={rec}>{rec}</li>)}</ul> : null}{line.evidence?.length ? <details className="gemini-evidence"><summary>Records supporting this answer ({line.evidence.length})</summary><ul>{line.evidence.map((ev) => <li key={ev.id}><span>{ev.label}</span><small>{formatDate(ev.date)} · {money(ev.amountCents, { sign: true })}</small></li>)}</ul></details> : null}</div>) : <p className="muted">Ask about a projected change, a saved scenario, outstanding invoices or the records behind an alert.</p>}{chatBusy && <p className="muted">Morgan is checking the financial context…</p>}</div>
         {chatError && <div className="panel-body"><ErrorBox message={chatError} onRetry={() => setChatError('')} /></div>}
-        <form className="gemini-form" onSubmit={ask}><label className="visually-hidden" htmlFor="gemini-question">Ask a financial question</label><input className="input" id="gemini-question" maxLength={1200} value={question} onChange={(e) => setQuestion(e.target.value)} placeholder="Why does projected cash fall in week 8?" disabled={chatBusy} /><button className="btn primary" disabled={chatBusy || !question.trim()}><Icon name="arrowRight" size={15} />Ask</button></form>
+        <form className="gemini-form" onSubmit={ask}><label className="visually-hidden" htmlFor="gemini-question">Ask a financial question</label><input className="input" id="gemini-question" maxLength={1200} value={question} onChange={(e) => setQuestion(e.target.value)} placeholder="Why does projected cash fall in week 8?" disabled={chatBusy || usage.data?.usage.intelligenceRequests.remaining === 0} /><button className="btn primary" disabled={chatBusy || !question.trim() || usage.data?.usage.intelligenceRequests.remaining === 0}><Icon name="arrowRight" size={15} />Ask</button></form>
       </section>
       {showScenario && <div className="modal-backdrop" role="presentation" onMouseDown={(e) => e.target === e.currentTarget && setShowScenario(false)}><form className="modal scenario-modal" onSubmit={saveScenario} aria-labelledby="scenario-title"><div className="modal-head"><div><span className="eyebrow gold">Horizon scenario</span><h2 id="scenario-title">{editingId ? 'Edit scenario' : 'Create scenario'}</h2></div><button type="button" className="btn ghost icon sm" aria-label="Close" onClick={() => setShowScenario(false)}><Icon name="close" /></button></div>
         <div className="form-grid"><div className="field"><label htmlFor="scenario-name">Scenario name</label><input className="input" id="scenario-name" required maxLength={100} value={scenarioName} onChange={(e) => setScenarioName(e.target.value)} placeholder="Bring on a new designer" /></div></div>

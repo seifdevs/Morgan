@@ -5,6 +5,7 @@ import { readFile, writeFile, mkdir } from 'node:fs/promises';
 import { resolve, dirname } from 'node:path';
 import { createServer } from 'vite';
 import react from '@vitejs/plugin-react';
+import policies from '../shared/policies.json' with { type: 'json' };
 
 const root = process.cwd();
 const dist = resolve(root, 'dist');
@@ -22,6 +23,7 @@ const entries = [
   { path: '/agency-cash-flow', output: 'seo-pages/agency-cash-flow.html', title: 'Cash-flow management for agencies', description: 'Explore agency cash flow with open invoices, unpaid bills and an inspectable 13-week estimate. Learn what the forecast includes and what it leaves out.' },
   { path: '/agency-profitability', output: 'seo-pages/agency-profitability.html', title: 'Profitability tracking for agencies', description: 'Review agency income and categorized expenses over time with Morgan. Understand the current limits of business-level reporting and how to prepare records for a useful review.' },
 ];
+for (const policy of policies) entries.push({ path: `/policies/${policy.slug}`, output: `seo-pages/policies-${policy.slug}.html`, title: policy.label, description: `${policy.label} for Morgan Financial. Effective ${policy.effectiveDate}.` });
 const guides = [
   ['cash-position', 'Read your cash position with context', 'A cash balance is a point-in-time number. It becomes more useful when you can also see what is expected to arrive and what is due to leave.'],
   ['receivables-aging', 'Make an invoice aging view easier to use', 'An aging view groups unpaid invoices by how far past due they are. It is a review tool, not a promise of collection.'],
@@ -32,7 +34,7 @@ const guides = [
 ];
 for (const [slug, title, description] of guides) entries.push({ path: `/resources/${slug}`, output: `seo-pages/resources-${slug}.html`, title, description });
 
-function publicTree({ AuthProvider, PublicLayout, Home, Features, Pricing, About, Resources, ResourceDetail, Faq, Contact, NotFound, AgencyPage, ToastProvider, RenderBoundary, motionFeatures, location }) {
+function publicTree({ AuthProvider, PublicLayout, Home, Features, Pricing, About, Resources, ResourceDetail, Faq, Contact, Policy, NotFound, AgencyPage, ToastProvider, RenderBoundary, motionFeatures, location }) {
   const page = (component, props = {}) => h(component, props);
   return h(StrictMode, null,
       h((awaitableLazyMotion), { features: motionFeatures, strict: true },
@@ -55,6 +57,7 @@ function publicTree({ AuthProvider, PublicLayout, Home, Features, Pricing, About
                       h(Route, { path: 'resources/:slug', element: page(ResourceDetail) }),
                       h(Route, { path: 'faq', element: page(Faq) }),
                       h(Route, { path: 'contact', element: page(Contact) }),
+                      h(Route, { path: 'policies/:slug', element: page(Policy) }),
                       h(Route, { path: '*', element: page(NotFound) }),
                     ),
                   ),
@@ -72,13 +75,14 @@ function publicTree({ AuthProvider, PublicLayout, Home, Features, Pricing, About
 let awaitableLazyMotion; let awaitableMotionConfig;
 const vite = await createServer({ configFile: false, root, appType: 'custom', plugins: [react()], server: { middlewareMode: true, hmr: false }, optimizeDeps: { noDiscovery: true, include: [] } });
 try {
-  const [motion, auth, layout, home, pages, agency, ui, boundary, featureModule] = await Promise.all([
+  const [motion, auth, layout, home, pages, agency, policyPage, ui, boundary, featureModule] = await Promise.all([
     import('motion/react'),
     vite.ssrLoadModule('/src/lib/auth.tsx'),
     vite.ssrLoadModule('/src/pages/public/PublicLayout.tsx'),
     vite.ssrLoadModule('/src/pages/public/Home.tsx'),
     vite.ssrLoadModule('/src/pages/public/Pages.tsx'),
     vite.ssrLoadModule('/src/pages/public/AgencyPages.tsx'),
+    vite.ssrLoadModule('/src/pages/public/Policy.tsx'),
     vite.ssrLoadModule('/src/components/ui.tsx'),
     vite.ssrLoadModule('/src/components/RenderBoundary.tsx'),
     vite.ssrLoadModule('/src/lib/motionFeatures.ts'),
@@ -98,7 +102,7 @@ try {
   ] };
   const escape = (value) => String(value).replaceAll('&', '&amp;').replaceAll('"', '&quot;').replaceAll('<', '&lt;');
   for (const entry of entries) {
-    const markup = renderToString(publicTree({ AuthProvider: auth.AuthProvider, PublicLayout: layout.PublicLayout, Home: home.default, Features, Pricing, About, Resources, ResourceDetail, Faq, Contact, NotFound, AgencyPage: agency.AgencyPage, ToastProvider: ui.ToastProvider, RenderBoundary: boundary.RenderBoundary, motionFeatures: featureModule.default, location: entry.path }));
+    const markup = renderToString(publicTree({ AuthProvider: auth.AuthProvider, PublicLayout: layout.PublicLayout, Home: home.default, Features, Pricing, About, Resources, ResourceDetail, Faq, Contact, Policy: policyPage.default, NotFound, AgencyPage: agency.AgencyPage, ToastProvider: ui.ToastProvider, RenderBoundary: boundary.RenderBoundary, motionFeatures: featureModule.default, location: entry.path }));
     const indexable = entry.indexable !== false;
     const canonical = `${origin}${entry.path}`;
     const metadata = [

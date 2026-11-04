@@ -155,6 +155,8 @@
 
 /* ---------- Auth: two related but distinct compositions ---------- */
 .auth { min-height: 100dvh; display: grid; grid-template-columns: repeat(12, minmax(0, 1fr)); background: var(--bg); }
+.auth-document { background: var(--bg); }
+.auth-document .pub-footer { background: #19212B; border-top: 1px solid #27313C; color: #F4F6F8; }
 .auth-stage { position: relative; overflow: hidden; background: #0B0F14; display: flex; flex-direction: column; padding: 32px clamp(24px, 3vw, 48px); }
 .auth-panel { display: flex; flex-direction: column; padding: 32px clamp(24px, 4vw, 64px); }
 .auth-top { display: flex; justify-content: space-between; align-items: center; gap: 16px; }
@@ -189,6 +191,18 @@
 .signup-steps { display: flex; border-top: 1px solid var(--line); }
 .signup-steps span { flex: 1; padding-top: 10px; font: 500 11px var(--mono); letter-spacing: .06em; text-transform: uppercase; color: var(--muted); border-top: 2px solid transparent; margin-top: -1px; transition: color .3s, border-color .4s var(--ease-out); }
 .signup-steps span.on { color: var(--gold); border-top-color: var(--gold); }
+.policy-acceptance { align-items: start; line-height: 1.6; font-size: 13px; }
+.policy-acceptance input { margin-top: 4px; }
+.policy-acceptance a { color: var(--gold); text-decoration: underline; text-underline-offset: 3px; }
+.policy-page { max-width: 1040px; }
+.policy-header { padding-bottom: 28px; margin-bottom: 40px; border-bottom: 1px solid var(--line); }
+.policy-header h1 { margin: 14px 0; font: 800 clamp(38px, 6vw, 72px)/1 var(--display); letter-spacing: -.05em; }
+.policy-header p { color: var(--muted); }
+.policy-copy { max-width: 800px; }
+.policy-copy h2 { margin: 34px 0 12px; font-size: clamp(20px, 3vw, 27px); line-height: 1.2; }
+.policy-copy p { margin: 0 0 16px; color: var(--soft); line-height: 1.8; overflow-wrap: anywhere; }
+.policy-switcher { display: flex; flex-wrap: wrap; gap: 12px 24px; border-top: 1px solid var(--line); margin-top: 48px; padding-top: 20px; }
+.policy-switcher a { text-decoration: underline; text-underline-offset: 4px; }
 .stage-caption { position: absolute; left: clamp(24px, 3vw, 48px); bottom: 32px; right: 32px; color: var(--muted); font-size: 13px; }
 .stage-folio { position: absolute; left: clamp(24px, 3vw, 48px); top: 32px; }
 
@@ -227,6 +241,7 @@
   .cta-band .btn { margin-top: 24px; }
   .auth.login .auth-stage, .auth.signup .auth-stage { display: none; }
   .auth.login .auth-panel, .auth.signup .auth-panel { grid-column: 1 / 13; }
+  .policy-page { padding-bottom: 72px; }
 }
 @media (max-width: 760px) {
   .page-intro h1 { font-size: clamp(32px, 10.5vw, 46px); letter-spacing: -0.055em; }

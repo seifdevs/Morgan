@@ -33,6 +33,17 @@ export async function connectDb(uri, dbName) {
     db.collection('geminiThreads').createIndex({ businessId: 1, updatedAt: -1 }),
     db.collection('usagePeriods').createIndex({ businessId: 1, month: 1 }, { unique: true }),
     db.collection('usageEvents').createIndex({ businessId: 1, month: 1, createdAt: -1 }),
+    db.collection('planPayments').createIndex({ userId: 1, createdAt: -1 }),
+    db.collection('planPayments').createIndex({ transactionId: 1 }, { unique: true, partialFilterExpression: { transactionId: { $type: 'string' } } }),
+    db.collection('planPayments').createIndex({ transactionIdNormalized: 1 }, { unique: true, partialFilterExpression: { transactionIdNormalized: { $type: 'string' } } }),
+    db.collection('paypalPaymentIdentifiers').createIndex({ paymentId: 1 }, { unique: true }),
+    db.collection('paypalPaymentIdentifiers').createIndex({ purgeAt: 1 }, { expireAfterSeconds: 0, partialFilterExpression: { purgeAt: { $type: 'date' } } }),
+    db.collection('planPayments').createIndex({ status: 1, createdAt: -1 }),
+    db.collection('planPayments').createIndex({ purgeAt: 1 }, { expireAfterSeconds: 0, partialFilterExpression: { purgeAt: { $type: 'date' } } }),
+    db.collection('policyAcceptances').createIndex({ userId: 1, acceptedAt: -1 }),
+    db.collection('policyAcceptances').createIndex({ purgeAt: 1 }, { expireAfterSeconds: 0, partialFilterExpression: { purgeAt: { $type: 'date' } } }),
+    db.collection('adminAudit').createIndex({ createdAt: -1 }),
+    db.collection('adminAudit').createIndex({ purgeAt: 1 }, { expireAfterSeconds: 0, partialFilterExpression: { purgeAt: { $type: 'date' } } }),
   ]);
   // Ensure an idempotent baseline exists for each legacy account this UTC month.
   // New accounts create their period through the reservation path.

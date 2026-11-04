@@ -31,8 +31,8 @@ export const faqs: [string, [string, string][]][] = [
     ['Can I download a report?', 'Morgan can generate a financial report PDF from the records and forecast context available in your workspace. Review the period and underlying records before sharing it.'],
   ]],
   ['Pricing', [
-    ['What does Morgan cost today?', 'Starter is free. Pro is listed at $49.99 per month or $499 per year, and Max at $199.99 per month or $1,499 per year. Starter limits are active; paid checkout and activation are not configured. Starter has no trial.'],
-    ['Can I buy Pro or Max?', 'Not yet. There is no checkout, subscription or charge. New accounts receive the active Starter plan without payment details; paid plans will require verified billing before they can be activated.'],
-    ['Can I cancel a paid plan?', 'There is no paid subscription to cancel today. Subscription management will be available when billing is configured.'],
+    ['What does Morgan cost today?', 'Starter is free. Pro is $49.99 for one month or $499 for one year; Max is $199.99 for one month or $1,499 for one year. Paid plans use one-time PayPal.Me payments and manual verification. There is no trial or automatic renewal.'],
+    ['Can I buy Pro or Max?', 'Sign in and open Plan & usage to create a payment request. Submit the PayPal transaction ID after paying; paid access starts only after an administrator verifies it in PayPal account activity.'],
+    ['Can I cancel a paid plan?', 'PayPal.Me payments do not renew automatically. Paid access remains available through the period end shown in Plan & usage; no renewal charge is made.'],
   ]],
 ];

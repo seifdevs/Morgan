@@ -6,6 +6,11 @@ import { MongoMemoryServer } from 'mongodb-memory-server';
 import { connectDb } from '../server/db.mjs';
 import { createApp } from '../server/app.mjs';
 import { hashToken } from '../server/lib/auth.mjs';
+import plans from '../shared/plans.json' with { type: 'json' };
+import policies from '../shared/policies.json' with { type: 'json' };
+
+const acceptedPolicies = policies.map(({ id, version }) => ({ policyId: id, version }));
+const acceptedPurchase = { acceptedPolicies, purchaseTermsAccepted: true };
 
 let mongod, client, server, base, db, realFetch, originalEnv;
 const resendRequests = [];
@@ -60,7 +65,7 @@ function agent() {
   return { call, get cookie() { return cookie; }, set cookie(v) { cookie = v; } };
 }
 
-const rawReg = (a, email, extra = {}) => a.call('POST', '/auth/register', { name: 'Owner', email, password: 'correct horse 42', businessName: 'Biz ' + email, country: 'US', bankId: '628', currency: 'USD', statementCurrencyConfirmed: true, statementFilename: 'statement.csv', statementFileBase64: Buffer.from('Date,Description,Amount\n2026-10-01,Sample row,1.00').toString('base64'), openingBalanceCents: 0, closingBalanceCents: 100, statementReviewed: true, ...extra });
+const rawReg = (a, email, extra = {}) => a.call('POST', '/auth/register', { name: 'Owner', email, password: 'correct horse 42', businessName: 'Biz ' + email, country: 'US', bankId: '628', currency: 'USD', statementCurrencyConfirmed: true, statementFilename: 'statement.csv', statementFileBase64: Buffer.from('Date,Description,Amount\n2026-10-01,Sample row,1.00').toString('base64'), openingBalanceCents: 0, closingBalanceCents: 100, statementReviewed: true, acceptedPolicies, ...extra });
 async function tokenFromLatest(email, subject = 'Verify your Morgan email') {
   const msg = [...resendRequests].reverse().find((m) => m.to?.includes(email.toLowerCase()) && m.subject === subject);
   assert.ok(msg, `expected a Resend request for ${subject}`);
@@ -101,6 +106,8 @@ test('registration validates input and rejects duplicates', async () => {
   const a = agent();
   assert.equal((await reg(a, 'bad-email')).status, 400);
   assert.equal((await a.call('POST', '/auth/register', { name: 'x', email: 'w@x.io', password: 'short', businessName: 'B' })).status, 400);
+  const missingAcceptance = await a.call('POST', '/auth/register', { name: 'No consent', email: 'no-consent@example.com', password: 'correct horse 42', businessName: 'No Consent', acceptedPolicies: [] });
+  assert.equal(missingAcceptance.status, 400, 'registration is rejected server-side without current policy versions');
   const banks = await a.call('GET', '/bank-directory?country=US&q=JPMorgan');
   assert.equal(banks.status, 200); assert.equal(banks.body.banks[0].name, 'JPMorgan Chase Bank, National Association'); assert.equal(banks.body.banks.length <= 100, true);
   const ok = await rawReg(a, 'Alice@Example.com');
@@ -109,6 +116,8 @@ test('registration validates input and rejects duplicates', async () => {
   assert.ok(ok.body.business.id);
   assert.ok(a.cookie, 'signup immediately creates a financial workspace session');
   const stored = await db.collection('users').findOne({ email: 'alice@example.com' });
+  assert.deepEqual(stored.policyVersionsAccepted, Object.fromEntries(policies.map(({ id, version }) => [id, version])));
+  assert.equal(await db.collection('policyAcceptances').countDocuments({ userId: stored._id, source: 'registration' }), 3);
   assert.equal(stored.emailVerified, true);
   assert.equal(await db.collection('verificationTokens').countDocuments({ userId: stored._id }), 0);
   assert.ok(!resendRequests.some((m) => m.subject === 'Verify your Morgan email' && m.to.includes('alice@example.com')));
@@ -122,6 +131,35 @@ test('registration validates input and rejects duplicates', async () => {
   assert.equal(tz.body.business.timezone, 'Pacific/Kiritimati');
   assert.equal((await reg(agent(), 'tz2@example.com', { timezone: 'Not/AZone' })).body.business.timezone, 'UTC');
   assert.match(stored.passwordHash, /^scrypt\$/);
+});
+
+test('registration succeeds without a bank statement and creates an empty workspace', async () => {
+  const account = agent();
+  const result = await account.call('POST', '/auth/register', {
+    name: 'No Statement', email: 'no-statement@example.com', password: 'correct horse 42', businessName: 'New Business', currency: 'EUR',
+    acceptedPolicies,
+  });
+  assert.equal(result.status, 201);
+  assert.equal(result.body.business.currency, 'EUR');
+  assert.equal(result.body.business.openingBalanceCents, 0);
+  assert.equal(result.body.business.openingBalanceDate, null);
+  const businessId = new ObjectId(result.body.business.id);
+  assert.equal(await db.collection('bankAccounts').countDocuments({ businessId }), 0);
+  assert.equal(await db.collection('statementImports').countDocuments({ businessId }), 0);
+  assert.equal(await db.collection('transactions').countDocuments({ businessId }), 0);
+});
+
+test('policy updates require version-specific reacceptance before protected use resumes', async () => {
+  const customer = agent();
+  await reg(customer, 'policy-update@example.com');
+  const user = await db.collection('users').findOne({ email: 'policy-update@example.com' });
+  await db.collection('users').updateOne({ _id: user._id }, { $unset: { policyVersionsAccepted: '' } });
+  assert.equal((await customer.call('GET', '/account/policies/status')).body.missing.length, policies.length);
+  assert.equal((await customer.call('GET', '/usage')).status, 428);
+  assert.equal((await customer.call('POST', '/account/policies/accept', { acceptedPolicies: [{ policyId: policies[0].id, version: 'old-version' }] })).status, 400);
+  assert.equal((await customer.call('POST', '/account/policies/accept', { acceptedPolicies })).status, 200);
+  assert.equal((await customer.call('GET', '/usage')).status, 200);
+  assert.equal(await db.collection('policyAcceptances').countDocuments({ userId: user._id, source: 'reacceptance' }), policies.length);
 });
 
 test('registration imports only server-extracted statement data and requires reconciled balances', async () => {
@@ -150,7 +188,8 @@ test('registration imports only server-extracted statement data and requires rec
 
 test('demo account is isolated, visibly marked, populated and bypasses required onboarding', async () => {
   const a = agent();
-  const created = await a.call('POST', '/auth/demo', {});
+  assert.equal((await a.call('POST', '/auth/demo', {})).status, 400, 'demo creation also requires policy acceptance');
+  const created = await a.call('POST', '/auth/demo', { acceptedPolicies });
   assert.equal(created.status, 201); assert.equal(created.body.business.isDemo, true); assert.equal(created.body.business.financialSetupComplete, true);
   const biz = new ObjectId(created.body.business.id);
   assert.ok(await db.collection('transactions').countDocuments({ businessId: biz, simulated: true }) >= 5);
@@ -231,6 +270,68 @@ test('administrator role is database-backed and protected on the API', async () 
   assert.equal((await agent().call('GET', '/admin/overview')).status, 401, 'server denies unauthenticated requests');
 });
 
+test('PayPal.Me payments stay pending until an administrator approves the unique transaction', async () => {
+  const admin = agent(), customer = agent(), other = agent();
+  const priorAdminEmail = process.env.MORGAN_ADMIN_EMAIL;
+  process.env.MORGAN_ADMIN_EMAIL = 'paypal-admin@example.com';
+  await reg(admin, 'paypal-admin@example.com');
+  process.env.MORGAN_ADMIN_EMAIL = priorAdminEmail;
+  await reg(customer, 'paypal-customer@example.com');
+  await reg(other, 'paypal-other@example.com');
+  assert.equal((await agent().call('GET', '/admin/payments')).status, 401);
+  const checkout = await customer.call('POST', '/billing/checkouts', { ...acceptedPurchase, planId: 'pro', interval: 'annual', amountCents: 1, currency: 'EGP' });
+  assert.equal(checkout.status, 201);
+  assert.equal(checkout.body.amountCents, 49900, 'the server chooses the amount from central plan configuration');
+  assert.equal(checkout.body.paymentUrl, 'https://paypal.me/seifroyale/499USD');
+  assert.equal(checkout.body.autoRenew, false);
+  const checkoutRecord = await db.collection('planPayments').findOne({ _id: checkout.body.reference });
+  assert.equal(checkoutRecord.policyAcceptances.length, policies.length);
+  assert.ok(checkoutRecord.policyAcceptedAt instanceof Date);
+  assert.ok(checkoutRecord.purchaseTermsAcceptedAt instanceof Date);
+  assert.match(checkoutRecord.purchaseTermsText, /no automatic renewal/i);
+  assert.equal((await customer.call('POST', '/billing/checkouts', { planId: 'pro', interval: 'monthly', purchaseTermsAccepted: false })).status, 400, 'checkout requires policy and purchase-term acceptance');
+  assert.equal((await other.call('POST', `/billing/checkouts/${checkout.body.reference}/transaction`, { transactionId: 'OTHER_ACCOUNT_TXN' })).status, 404);
+  assert.equal((await admin.call('POST', `/admin/payments/${checkout.body.reference}/decision`, { action: 'approve' })).status, 409, 'a checkout visit without a submitted transaction ID cannot be approved');
+  assert.equal((await customer.call('POST', `/billing/checkouts/${checkout.body.reference}/transaction`, { transactionId: 'PAYPAL-BAD-EMAIL', paypalIdentifier: 'bad@email' })).status, 400, 'invalid PayPal email/username information is rejected');
+  const submitted = await customer.call('POST', `/billing/checkouts/${checkout.body.reference}/transaction`, { transactionId: 'PAYPAL-UNIQUE-001', paypalIdentifier: 'owner@example.com' });
+  assert.equal(submitted.status, 202);
+  const customerPayments = await customer.call('GET', '/billing/checkouts');
+  assert.equal(customerPayments.body.find((item) => item.reference === checkout.body.reference).paypalIdentifier, undefined, 'PayPal identity data is only available to authorized admins');
+  const heldIdentifier = await db.collection('paypalPaymentIdentifiers').findOne({ paymentId: checkout.body.reference });
+  assert.equal(heldIdentifier.paypalIdentifier, 'owner@example.com');
+  assert.ok(heldIdentifier.purgeAt instanceof Date);
+  assert.equal((await other.call('POST', `/billing/checkouts/${(await other.call('POST', '/billing/checkouts', { ...acceptedPurchase, planId: 'pro', interval: 'monthly' })).body.reference}/transaction`, { transactionId: 'PAYPAL-UNIQUE-001', paypalIdentifier: 'different_user' })).status, 409, 'PayPal transaction IDs cannot be reused across accounts');
+  assert.equal((await customer.call('GET', '/usage')).body.plan.id, 'starter', 'a submitted ID alone does not activate an entitlement');
+  assert.equal((await customer.call('GET', '/admin/payments')).status, 403);
+  const payments = await admin.call('GET', '/admin/payments');
+  const review = payments.body.find((item) => item.id === checkout.body.reference);
+  assert.equal(review.customerName, 'Owner');
+  assert.equal(review.paypalIdentifier, 'owner@example.com');
+  assert.equal(review.email, 'paypal-customer@example.com');
+  assert.equal(review.transactionId, 'PAYPAL-UNIQUE-001');
+  assert.equal(review.status, 'pending_verification');
+  assert.equal((await admin.call('POST', `/admin/payments/${checkout.body.reference}/decision`, { action: 'approve' })).status, 400, 'approval requires explicit confirmation of PayPal verification');
+  assert.equal((await admin.call('POST', `/admin/payments/${checkout.body.reference}/decision`, { action: 'approve', verificationConfirmed: true })).status, 200);
+  assert.equal((await customer.call('GET', '/usage')).body.plan.id, 'pro');
+  assert.equal((await customer.call('GET', '/usage')).body.usage.financialRecords.used, 1, 'upgrading does not reset prior usage');
+  assert.equal((await customer.call('GET', '/usage')).body.subscription.autoRenew, false);
+  assert.equal((await admin.call('POST', `/admin/payments/${checkout.body.reference}/decision`, { action: 'approve' })).status, 409, 'the same payment cannot be approved twice');
+  const customerUser = await db.collection('users').findOne({ email: 'paypal-customer@example.com' });
+  assert.equal(await db.collection('adminAudit').countDocuments({ action: 'manual_payment_approve', targetUserId: customerUser._id }), 1);
+  const periodId = `${String(customerUser.businessId)}:${new Date().toISOString().slice(0,7)}`;
+  await db.collection('usagePeriods').updateOne({ _id: periodId }, { $set: { 'counters.financialRecords': 251 } });
+  assert.equal((await admin.call('PATCH', `/admin/users/${customerUser._id}/subscription`, { planId: 'starter' })).status, 200);
+  assert.equal((await customer.call('GET', '/usage')).body.plan.id, 'starter', 'an administrative downgrade takes effect without removing the customer records');
+  assert.equal((await customer.call('GET', '/usage')).body.usage.financialRecords.used, 251, 'downgrade preserves historical usage, including usage above the Starter cap');
+  const today = (await customer.call('GET', '/financial-setup')).body.today;
+  assert.equal((await customer.call('POST', '/transactions', { date: today, description: 'Over-quota after downgrade', amount: '1.00', type: 'expense' })).status, 429);
+
+  const rejectedCheckout = await other.call('POST', '/billing/checkouts', { ...acceptedPurchase, planId: 'max', interval: 'monthly' });
+  await other.call('POST', `/billing/checkouts/${rejectedCheckout.body.reference}/transaction`, { transactionId: 'PAYPAL-REJECT-001', paypalIdentifier: 'another@example.com' });
+  assert.equal((await admin.call('POST', `/admin/payments/${rejectedCheckout.body.reference}/decision`, { action: 'reject' })).status, 200);
+  assert.equal((await other.call('GET', '/usage')).body.plan.id, 'starter', 'rejecting a payment leaves entitlements unchanged');
+});
+
 test('state-changing requests require the CSRF header', async () => {
   const a = agent();
   const r = await a.call('POST', '/auth/login', { email: 'alice@example.com', password: 'correct horse 42' }, { 'x-morgan-csrf': '0' });
@@ -302,7 +403,7 @@ test('production headers: CSP, HSTS, secure cookie, health check', async () => {
     assert.deepEqual(await h.json(), { ok: true, db: 'up' });
     assert.match(h.headers.get('content-security-policy'), /default-src 'self'.*frame-ancestors 'none'/);
     assert.match(h.headers.get('strict-transport-security'), /max-age/);
-    const r = await fetch(url + '/auth/register', { method: 'POST', headers: { 'content-type': 'application/json', 'x-morgan-csrf': '1' }, body: JSON.stringify({ name: 'S', email: 'secure@example.com', password: 'correct horse 42', businessName: 'S', country: 'US', bankId: '628', currency: 'USD', statementCurrencyConfirmed: true, statementFilename: 'statement.csv', statementFileBase64: statementFile, openingBalanceCents: 0, closingBalanceCents: 100, statementReviewed: true }) });
+    const r = await fetch(url + '/auth/register', { method: 'POST', headers: { 'content-type': 'application/json', 'x-morgan-csrf': '1' }, body: JSON.stringify({ name: 'S', email: 'secure@example.com', password: 'correct horse 42', businessName: 'S', country: 'US', bankId: '628', currency: 'USD', statementCurrencyConfirmed: true, statementFilename: 'statement.csv', statementFileBase64: statementFile, openingBalanceCents: 0, closingBalanceCents: 100, statementReviewed: true, acceptedPolicies }) });
     assert.equal(r.status, 201);
     assert.match(r.headers.get('set-cookie'), /; Secure/, 'registration issues the authenticated session over a secure cookie');
     const login = await fetch(url + '/auth/login', { method: 'POST', headers: { 'content-type': 'application/json', 'x-morgan-csrf': '1' }, body: JSON.stringify({ email: 'secure@example.com', password: 'correct horse 42' }) });
@@ -434,6 +535,47 @@ test('Starter entitlements are server enforced and usage is visible with a UTC r
   assert.equal((await a.call('POST', '/horizon/scenarios', scenario)).status, 201);
   assert.equal((await a.call('POST', '/horizon/scenarios', scenario)).status, 429);
   assert.equal((await a.call('GET', '/usage')).body.capabilities.scenariosPerWorkspace.used, 1);
+});
+
+test('Pro and Max backend boundaries cover records, forecasts, scenarios and reports', async () => {
+  for (const [planId, interval] of [['pro','monthly'], ['max','annual']]) {
+    const a = agent(), email = `entitlement-${planId}-api@example.com`;
+    await reg(a, email);
+    const user = await db.collection('users').findOne({ email });
+    const end = new Date(); end.setUTCDate(end.getUTCDate() + 30);
+    await db.collection('users').updateOne({ _id: user._id }, { $set: { planId, billingStatus: 'active', billingInterval: interval, currentPeriodEnd: end } });
+    const usage = await a.call('GET', '/usage');
+    assert.equal(usage.body.plan.id, planId);
+    assert.equal(usage.body.capabilities.forecastDays, 90);
+    assert.equal(usage.body.usage.financialRecords.limit, plans[planId].limits.financialRecords);
+    const forecast = await a.call('GET', '/horizon?days=90');
+    assert.equal(forecast.status, 200);
+    assert.equal(forecast.body.forecasts.base.length, 90);
+
+    const month = new Date().toISOString().slice(0, 7), periodId = `${String(user.businessId)}:${month}`;
+    const recordLimit = plans[planId].limits.financialRecords, pdfLimit = plans[planId].limits.pdfReports, scenarioLimit = plans[planId].limits.scenariosPerWorkspace;
+    await db.collection('usagePeriods').updateOne({ _id: periodId }, { $set: { 'counters.financialRecords': recordLimit - 1, 'counters.pdfReports': pdfLimit - 1 } });
+    const today = (await a.call('GET', '/financial-setup')).body.today;
+    const record = { date: today, description: `${planId} boundary`, amount: '1.00', type: 'expense' };
+    assert.equal((await a.call('POST', '/transactions', record)).status, 201);
+    assert.equal((await a.call('POST', '/transactions', { ...record, description: `${planId} beyond boundary` })).status, 429);
+    assert.equal((await a.call('GET', '/reports/pdf?year=2026')).status, 200);
+    assert.equal((await a.call('GET', '/reports/pdf?year=2026')).status, 429);
+
+    const biz = await db.collection('businesses').findOne({ _id: user.businessId });
+    await db.collection('businesses').updateOne({ _id: biz._id }, { $set: { scenarioSlotsInitialized: true, activeScenarioIds: Array.from({ length: scenarioLimit - 1 }, (_, n) => `occupied-${n}`) } });
+    const todayDate = today;
+    const scenario = { name: `${planId} capacity`, assumptions: [{ type: 'large-purchase', name: 'Test purchase', startDate: todayDate, amountCents: 100, cadence: 'once' }] };
+    const lastScenario = await a.call('POST', '/horizon/scenarios', scenario);
+    assert.equal(lastScenario.status, 201);
+    assert.equal((await a.call('POST', '/horizon/scenarios', scenario)).status, 429);
+    assert.equal((await a.call('PATCH', `/horizon/scenarios/${lastScenario.body.id}`, { ...scenario, name: `${planId} edited` })).status, 200);
+    assert.equal((await a.call('DELETE', `/horizon/scenarios/${lastScenario.body.id}`)).status, 200);
+    assert.equal((await a.call('POST', '/horizon/scenarios', scenario)).status, 201, 'deleting the saved scenario frees its slot');
+    assert.equal((await a.call('GET', '/usage')).body.usage.financialRecords.used, recordLimit);
+    assert.equal((await a.call('GET', '/usage')).body.usage.pdfReports.used, pdfLimit);
+    assert.equal((await a.call('GET', '/usage')).body.capabilities.scenariosPerWorkspace.used, 1);
+  }
 });
 
 test('Morgan Intelligence monthly cap is atomic and failed provider calls release their reservation', async () => {
@@ -704,6 +846,7 @@ test('bills, overview and analytics use persisted data', async () => {
 test('password change signs out other sessions; account deletion removes data', async () => {
   const a = agent(), other = agent();
   await reg(a, 'frank@example.com');
+  const frank = await db.collection('users').findOne({ email: 'frank@example.com' });
   await other.call('POST', '/auth/login', { email: 'frank@example.com', password: 'correct horse 42' });
   assert.equal((await a.call('POST', '/account/password', { currentPassword: 'bad', newPassword: 'new password 99' })).status, 401);
   const ch = await a.call('POST', '/account/password', { currentPassword: 'correct horse 42', newPassword: 'new password 99' });
@@ -712,8 +855,16 @@ test('password change signs out other sessions; account deletion removes data', 
   assert.equal((await other.call('GET', '/auth/me')).body.user, null);
   assert.equal((await a.call('GET', '/auth/me')).body.user.email, 'frank@example.com');
   await a.call('POST', '/transactions', { date: '2026-10-01', description: 'x', amount: '5', type: 'income' });
+  const retainedPaymentId = `retention-${frank._id}`;
+  await db.collection('planPayments').insertOne({ _id: retainedPaymentId, userId: frank._id, status: 'pending_verification', createdAt: new Date() });
+  await db.collection('paypalPaymentIdentifiers').insertOne({ paymentId: retainedPaymentId, userId: frank._id, paypalIdentifier: 'frank@example.com' });
   assert.equal((await a.call('DELETE', '/account', { password: 'new password 99' })).status, 200);
   assert.equal(await db.collection('users').countDocuments({ email: 'frank@example.com' }), 0);
+  const retainedPayment = await db.collection('planPayments').findOne({ _id: retainedPaymentId });
+  assert.equal(retainedPayment.status, 'cancelled');
+  assert.ok(retainedPayment.purgeAt instanceof Date);
+  assert.ok((await db.collection('paypalPaymentIdentifiers').findOne({ paymentId: retainedPaymentId })).purgeAt instanceof Date);
+  assert.ok((await db.collection('policyAcceptances').findOne({ userId: frank._id })).purgeAt instanceof Date);
   assert.equal((await agent().call('POST', '/auth/login', { email: 'frank@example.com', password: 'new password 99' })).status, 401);
 });
 

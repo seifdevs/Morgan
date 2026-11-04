@@ -2,6 +2,8 @@ import { useEffect, useState, type ReactNode } from 'react';
 import { Navigate, NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { Icon, Marker, Wordmark, useToast } from '../../components/ui';
 import { useAuth } from '../../lib/auth';
+import { api } from '../../lib/api';
+import policies from '../../../shared/policies.json';
 
 const nav: { group?: string; items: { to: string; label: string; icon: string; end?: boolean }[] }[] = [
   { items: [{ to: '/app', label: 'Dashboard', icon: 'overview', end: true }] },
@@ -34,10 +36,31 @@ function AppLayout() {
   const loc = useLocation();
   const navTo = useNavigate();
   const toast = useToast();
+  const [policyLoading, setPolicyLoading] = useState(true);
+  const [policyMissing, setPolicyMissing] = useState<{ id: string; label: string; slug: string; version: string }[]>([]);
+  const [policyChecks, setPolicyChecks] = useState<Record<string, boolean>>({});
+  const [policySaving, setPolicySaving] = useState(false);
+  const [policyError, setPolicyError] = useState('');
   useEffect(() => { setOpen(false); }, [loc.pathname]);
+  useEffect(() => {
+    let active = true;
+    api<{ missing: typeof policyMissing }>('/account/policies/status').then((result) => { if (active) setPolicyMissing(result.missing); }).catch((error) => { if (active) setPolicyError((error as Error).message); }).finally(() => { if (active) setPolicyLoading(false); });
+    return () => { active = false; };
+  }, [user?.id]);
 
   async function signOut() {
     try { await logout(); navTo('/login'); } catch (e) { toast((e as Error).message, 'error'); }
+  }
+
+  async function acceptPolicies() {
+    setPolicyError('');
+    if (!policies.every(({ id }) => policyChecks[id])) { setPolicyError('Select each policy to confirm acceptance.'); return; }
+    setPolicySaving(true);
+    try {
+      await api('/account/policies/accept', { method: 'POST', body: { acceptedPolicies: policies.map(({ id, version }) => ({ policyId: id, version })) } });
+      setPolicyMissing([]);
+    } catch (error) { setPolicyError((error as Error).message); }
+    finally { setPolicySaving(false); }
   }
 
   return (
@@ -76,7 +99,7 @@ function AppLayout() {
           <button onClick={signOut}><Icon name="logout" size={17} /><span>Log out</span></button>
         </div>
       </aside>
-      <main className="main" id="main">{business?.isDemo && <div className="demo-banner"><b>SIMULATED DEMO WORKSPACE</b><span>All people, businesses, transactions, balances, and plans shown here are fictional sample data.</span></div>}<div className="route" key={loc.pathname}><Outlet /></div></main>
+      <main className="main" id="main">{business?.isDemo && <div className="demo-banner"><b>SIMULATED DEMO WORKSPACE</b><span>All people, businesses, transactions, balances, and plans shown here are fictional sample data.</span></div>}{policyLoading ? <section className="panel panel-body">Checking current policies…</section> : policyMissing.length ? <section className="panel policy-renewal"><span className="eyebrow">Policy update / acknowledgement required</span><h1>Review Morgan’s current policies</h1><p>To continue using Morgan, review and accept each current policy. Your acceptance is recorded with the document version and time.</p>{policyError && <div className="form-error" role="alert">{policyError}</div>}{policyMissing.map((item) => <label className="check-row" key={item.id}><input type="checkbox" checked={!!policyChecks[item.id]} onChange={(event) => setPolicyChecks({ ...policyChecks, [item.id]: event.target.checked })} /><span>I have read and agree to the current <a href={`/policies/${item.slug}`} target="_blank" rel="noreferrer">{item.label}</a> (version {item.version}).</span></label>)}<button className="btn primary" disabled={policySaving} onClick={() => void acceptPolicies()}>{policySaving ? 'Saving acceptance…' : 'Accept current policies'}</button></section> : policyError ? <section className="panel panel-body form-error" role="alert">Could not check policy acceptance: {policyError}. Refresh to try again.</section> : <div className="route" key={loc.pathname}><Outlet /></div>}</main>
     </div>
   );
 }

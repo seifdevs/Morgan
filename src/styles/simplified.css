@@ -73,7 +73,7 @@
 .capability-row .ticks li { font-size: 14px; }
 .capability-row .ticks li::before { width: 8px; height: 5px; }
 .page > .product-system { margin: 0 auto 52px; }
-.pub-footer .pf-cols { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.pub-footer .pf-cols { grid-template-columns: repeat(4, minmax(0, 1fr)); }
 
 @media (max-width: 900px) {
   .simple-capabilities { grid-template-columns: repeat(2, 1fr); row-gap: 22px; }

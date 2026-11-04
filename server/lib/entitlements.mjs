@@ -7,7 +7,12 @@ const metricLimits = { financialRecords: 'financialRecords', intelligenceRequest
 const financialCollections = ['transactions', 'invoices', 'bills', 'planningItems'];
 export const utcMonth = (date = new Date()) => date.toISOString().slice(0, 7);
 export const nextUtcMonth = (month) => new Date(Date.UTC(Number(month.slice(0, 4)), Number(month.slice(5, 7)), 1)).toISOString();
-export const accountPlan = (user) => plans[user?.planId] ? user.planId : 'starter';
+export const accountPlan = (user, now = new Date()) => {
+  if (user?.planId === 'starter') return 'starter';
+  if (!plans[user?.planId] || user?.billingStatus !== 'active') return 'starter';
+  if (!user.currentPeriodEnd || !Number.isFinite(new Date(user.currentPeriodEnd).getTime()) || new Date(user.currentPeriodEnd) <= now) return 'starter';
+  return user.planId;
+};
 const periodId = (businessId, month) => `${String(businessId)}:${month}`;
 
 export async function recoverExpiredReservations(db, businessId, now = new Date()) {
@@ -37,7 +42,7 @@ export async function reserveUsage(db, { businessId, planId = 'starter', metric,
   const reserved = { id: token, metric, amount, expiresAt };
   const totalReserved = { $sum: { $map: { input: { $filter: { input: { $ifNull: ['$reservations', []] }, as: 'reservation', cond: { $eq: ['$$reservation.metric', metric] } } }, as: 'reservation', in: '$$reservation.amount' } } };
   const result = await periods.updateOne({ _id: id, $expr: { $lt: [{ $add: [{ $ifNull: [`$counters.${metric}`, 0] }, totalReserved] }, limit] } }, { $push: { reservations: reserved }, $set: { planId, updatedAt: now } });
-  if (!result.modifiedCount) throw new HttpError(429, `${metric === 'financialRecords' ? 'Financial record' : metric === 'intelligenceRequests' ? 'Morgan Intelligence' : 'PDF report'} monthly limit reached for ${plan.name}. Your allowance resets ${nextUtcMonth(month)}.`);
+  if (!result.modifiedCount) throw new HttpError(429, `${metric === 'financialRecords' ? 'Financial record' : metric === 'intelligenceRequests' ? 'Morgan Intelligence' : 'PDF report'} monthly limit reached for ${plan.name}. Your allowance resets ${nextUtcMonth(month)} UTC; visit Plan & usage to review upgrade options.`);
   return { id, token, businessId, month, metric, amount, planId, expiresAt };
 }
 
@@ -52,12 +57,15 @@ export async function finalizeUsage(db, reservation, details = {}) {
 export async function releaseUsage(db, reservation) {
   if (reservation) await db.collection('usagePeriods').updateOne({ _id: reservation.id, 'reservations.id': reservation.token }, { $pull: { reservations: { id: reservation.token } }, $set: { updatedAt: new Date() } });
 }
-export async function usageSummary(db, businessId, planId = 'starter', now = new Date()) {
+export async function usageSummary(db, businessId, planId = 'starter', now = new Date(), userId = null) {
   const month = utcMonth(now), plan = plans[planId] || plans.starter;
   await recoverExpiredReservations(db, businessId, now);
   const period = await db.collection('usagePeriods').findOne({ _id: periodId(businessId, month) });
   const savedScenarios = await db.collection('horizonScenarios').countDocuments({ businessId });
   const counters = period?.counters || {};
   const usage = Object.fromEntries(['financialRecords', 'intelligenceRequests', 'pdfReports'].map((metric) => [metric, { used: counters[metric] || 0, limit: plan.limits[metric], remaining: Math.max(0, plan.limits[metric] - (counters[metric] || 0)) }]));
-  return { plan, period: { month, resetsAt: nextUtcMonth(month), timezone: 'UTC' }, usage, capabilities: { workspaces: { used: 1, limit: plan.limits.workspaces }, seats: { used: 1, limit: plan.limits.seats }, scenariosPerWorkspace: { used: savedScenarios, limit: plan.limits.scenariosPerWorkspace }, forecastDays: plan.limits.forecastDays, monitor: plan.monitor }, paymentConfigured: false, subscriptionStatus: 'free' };
+  const user = userId ? await db.collection('users').findOne({ _id: userId }, { projection: { billingStatus: 1, billingInterval: 1, currentPeriodEnd: 1, planId: 1 } }) : null;
+  const paymentHistory = userId ? (await db.collection('planPayments').find({ userId }).sort({ createdAt: -1 }).limit(20).project({ planId: 1, billingInterval: 1, amountCents: 1, currency: 1, status: 1, transactionSubmittedAt: 1, createdAt: 1, verifiedAt: 1 }).toArray()).map(({ _id, ...item }) => ({ reference: String(_id), ...item })) : [];
+  const subscriptionStatus = user?.billingStatus === 'active' && user.currentPeriodEnd && new Date(user.currentPeriodEnd) <= now ? 'expired' : user?.billingStatus || 'free';
+  return { plan, plans, period: { month, resetsAt: nextUtcMonth(month), timezone: 'UTC' }, usage, capabilities: { workspaces: { used: 1, limit: plan.limits.workspaces }, seats: { used: 1, limit: plan.limits.seats }, scenariosPerWorkspace: { used: savedScenarios, limit: plan.limits.scenariosPerWorkspace }, forecastDays: plan.limits.forecastDays, monitor: plan.monitor }, subscription: { status: subscriptionStatus, billingInterval: user?.billingInterval || null, currentPeriodEnd: user?.currentPeriodEnd || null, autoRenew: false }, paymentHistory, paymentConfigured: true, automaticBillingAvailable: false };
 }

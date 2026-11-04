@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { MongoMemoryServer } from 'mongodb-memory-server';
 import { connectDb } from '../server/db.mjs';
 import { accountPlan, nextUtcMonth, plans, reserveUsage, utcMonth, usageSummary } from '../server/lib/entitlements.mjs';
+import { createCheckoutDetails } from '../server/lib/billing.mjs';
 
 test('UTC month periods advance at calendar boundaries', () => {
   assert.equal(utcMonth(new Date('2026-11-30T23:59:59.999Z')), '2026-11');
@@ -14,7 +15,11 @@ test('UTC month periods advance at calendar boundaries', () => {
 test('plan identity defaults to Starter and ignores unknown or client supplied values', () => {
   assert.equal(accountPlan({}), 'starter');
   assert.equal(accountPlan({ planId: 'unknown', limits: { financialRecords: 999999 } }), 'starter');
-  assert.equal(accountPlan({ planId: 'max' }), 'max');
+  assert.equal(accountPlan({ planId: 'max' }), 'starter', 'a plan ID without a verified active billing status does not grant paid access');
+  assert.equal(accountPlan({ planId: 'max', billingStatus: 'active' }), 'starter', 'paid access without a bounded verified period defaults to Starter');
+  assert.equal(accountPlan({ planId: 'max', billingStatus: 'active', currentPeriodEnd: new Date('2026-12-01T00:00:00Z') }, new Date('2026-11-30T23:59:59Z')), 'max');
+  assert.equal(accountPlan({ planId: 'max', billingStatus: 'active', currentPeriodEnd: new Date('2026-11-01T00:00:00Z') }, new Date('2026-11-04T00:00:00Z')), 'starter', 'expired access falls back to Starter');
+  assert.equal(accountPlan({ planId: 'pro', billingStatus: 'suspended' }), 'starter');
 });
 
 test('published prices and all plan entitlement values match the approved schedule', () => {
@@ -24,6 +29,19 @@ test('published prices and all plan entitlement values match the approved schedu
     pro: { workspaces: 1, seats: 3, financialRecords: 3000, forecastDays: 90, scenariosPerWorkspace: 10, intelligenceRequests: 150, pdfReports: 20 },
     max: { workspaces: 5, seats: 10, financialRecords: 20000, forecastDays: 90, scenariosPerWorkspace: 50, intelligenceRequests: 600, pdfReports: 100 },
   });
+  assert.deepEqual(Object.fromEntries(Object.values(plans).map((plan) => [plan.id, plan.monitor])), { starter: 'core', pro: 'full', max: 'full' });
+});
+
+test('PayPal.Me provider adapter returns the approved one-time links and never claims recurring billing', () => {
+  const checkout = createCheckoutDetails({ planId: 'pro', interval: 'monthly' });
+  assert.equal(checkout.externalUrl, 'https://paypal.me/seifroyale/49.99USD');
+  assert.equal(checkout.amountCents, plans.pro.monthlyCents);
+  assert.equal(checkout.provider, 'paypal_me_manual');
+  assert.equal(checkout.autoRenew, false);
+  assert.equal(checkout.adapter.automaticVerification, false);
+  assert.equal(checkout.adapter.recurringBilling, false);
+  assert.throws(() => createCheckoutDetails({ planId: 'starter', interval: 'monthly' }), { status: 400 });
+  assert.throws(() => createCheckoutDetails({ provider: 'paypal', planId: 'pro', interval: 'annual' }), { status: 503 });
 });
 
 test('atomic reservations admit exactly the remaining concurrent monthly quota', async () => {
@@ -43,11 +61,11 @@ test('atomic reservations admit exactly the remaining concurrent monthly quota',
   }
 });
 
-test('Pro and Max monthly quota reservations enforce every advertised usage limit', async () => {
+test('Pro and Max monthly quota reservations enforce financial-record and PDF-report limits', async () => {
   const mongod = await MongoMemoryServer.create();
   const { client, db } = await connectDb(mongod.getUri(), 'entitlements_plans_test');
   try {
-    for (const planId of ['pro', 'max']) for (const metric of ['financialRecords', 'intelligenceRequests', 'pdfReports']) {
+    for (const planId of ['pro', 'max']) for (const metric of ['financialRecords', 'pdfReports']) {
       const businessId = `${planId}-${metric}`, month = '2026-11', limit = plans[planId].limits[metric], id = `${businessId}:${month}`;
       await db.collection('usagePeriods').insertOne({ _id: id, businessId, month, planId, counters: { financialRecords: 0, intelligenceRequests: 0, pdfReports: 0, [metric]: limit - 1 }, reservations: [] });
       assert.ok(await reserveUsage(db, { businessId, planId, metric, now: new Date('2026-11-04T12:00:00Z') }), `${planId} ${metric} admits the final allowed unit`);

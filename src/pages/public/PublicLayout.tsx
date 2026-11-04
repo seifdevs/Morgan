@@ -3,6 +3,7 @@ import { Link, NavLink, Outlet, useLocation } from 'react-router-dom';
 import { AnimatePresence, m, useReducedMotion, useScroll, useSpring, useTransform } from 'motion/react';
 import { Icon, Marker, Wordmark } from '../../components/ui';
 import { useAuth } from '../../lib/auth';
+import policies from '../../../shared/policies.json';
 
 const links = [
   { to: '/features', label: 'Product' },
@@ -126,12 +127,12 @@ export function PublicLayout() {
       </AnimatePresence>
 
       <main id="main" className={home ? 'pub-main home-main' : 'pub-main'}><div className="route" key={loc.pathname}><Outlet /></div></main>
-      <Footer />
+      <PublicFooter />
     </div>
   );
 }
 
-function Footer() {
+export function PublicFooter() {
   return (
     <footer className="pub-footer">
       <div className="pf-inner">
@@ -143,6 +144,7 @@ function Footer() {
           <div><h4>Product</h4><Link to="/features">Overview</Link><Link to="/pricing">Pricing</Link><Link to="/signup">Create account</Link><Link to="/login">Log in</Link></div>
           <div><h4>Company</h4><Link to="/about">About Morgan</Link><Link to="/contact">Contact</Link></div>
           <div><h4>Resources</h4><Link to="/resources">Field notes</Link><Link to="/faq">FAQ</Link></div>
+          <div><h4>Policies</h4>{policies.map((policy) => <Link key={policy.id} to={`/policies/${policy.slug}`}>{policy.label}</Link>)}</div>
         </nav>
       </div>
       <div className="pf-base">

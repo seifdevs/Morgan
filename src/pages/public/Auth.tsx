@@ -5,6 +5,8 @@ import { LedgerCover, LedgerTape } from '../../components/illustrations/Illustra
 import { api, type Business, type User } from '../../lib/api';
 import { useAuth } from '../../lib/auth';
 import { useDocumentTitle } from '../../lib/hooks';
+import { PublicFooter } from './PublicLayout';
+import policies from '../../../shared/policies.json';
 
 const CURRENCIES = ['USD', 'EUR', 'GBP', 'CAD', 'AUD', 'EGP', 'AED', 'SAR', 'CHF', 'JPY'];
 const rules = (pw: string) => [
@@ -40,8 +42,11 @@ function AuthShell({ kind, stage, children }: { kind: 'login' | 'signup'; stage:
     </main>
   );
   return (
-    <div className={`auth ${kind}`}>
-      {kind === 'login' ? <>{stage}{panel}</> : <>{panel}{stage}</>}
+    <div className="auth-document">
+      <div className={`auth ${kind}`}>
+        {kind === 'login' ? <>{stage}{panel}</> : <>{panel}{stage}</>}
+      </div>
+      <PublicFooter />
     </div>
   );
 }
@@ -73,9 +78,11 @@ export function Auth({ mode }: { mode: 'login' | 'signup' }) {
   const [banksError, setBanksError] = useState('');
   const [bankId, setBankId] = useState('');
   const [statementFile, setStatementFile] = useState<{ name: string; base64: string } | null>(null);
+  const [statementChoiceName, setStatementChoiceName] = useState('');
   const [statementPreview, setStatementPreview] = useState<RegistrationStatementPreview | null>(null);
   const [statementReviewed, setStatementReviewed] = useState(false);
   const [currencyConfirmed, setCurrencyConfirmed] = useState(false);
+  const [policyAccepted, setPolicyAccepted] = useState(false);
   const [demoBusy, setDemoBusy] = useState(false);
   const set = (k: keyof typeof form) => (v: string) => setForm((f) => ({ ...f, [k]: v }));
   useEffect(() => {
@@ -98,16 +105,20 @@ export function Auth({ mode }: { mode: 'login' | 'signup' }) {
     try {
       if (signup && !statementPreview) {
         const file = (e.currentTarget.elements.namedItem('statement') as HTMLInputElement)?.files?.[0];
-        if (!country || !bankId || !file) throw new Error('Choose your country, bank, and PDF or CSV statement first.');
-        if (!['application/pdf', 'text/csv', 'application/vnd.ms-excel', ''].includes(file.type) && !/\.(pdf|csv)$/i.test(file.name)) throw new Error('Upload a PDF or CSV bank statement.');
-        const base64 = await new Promise<string>((resolve, reject) => { const reader = new FileReader(); reader.onload = () => resolve(String(reader.result).split(',')[1] || ''); reader.onerror = () => reject(new Error('The statement file could not be read.')); reader.readAsDataURL(file); });
-        const parsed = await api<RegistrationStatementPreview>('/auth/statement-preview', { method: 'POST', body: { filename: file.name, sourceFileBase64: base64, currency: 'USD' } });
-        if (!parsed.rows.length) throw new Error('No transactions were found in this statement.');
-        setStatementFile({ name: file.name, base64 }); setStatementPreview(parsed); setStatementReviewed(false); setBusy(false); return;
+        if (file) {
+          if (!country || !bankId) throw new Error('Choose the bank and country for the statement you want to import.');
+          if (!['application/pdf', 'text/csv', 'application/vnd.ms-excel', ''].includes(file.type) && !/\.(pdf|csv|xlsx)$/i.test(file.name)) throw new Error('Upload a PDF, CSV, or XLSX bank statement.');
+          const base64 = await new Promise<string>((resolve, reject) => { const reader = new FileReader(); reader.onload = () => resolve(String(reader.result).split(',')[1] || ''); reader.onerror = () => reject(new Error('The statement file could not be read.')); reader.readAsDataURL(file); });
+          const parsed = await api<RegistrationStatementPreview>('/auth/statement-preview', { method: 'POST', body: { filename: file.name, sourceFileBase64: base64, currency: 'USD' } });
+          if (!parsed.rows.length) throw new Error('No transactions were found in this statement.');
+          setStatementFile({ name: file.name, base64 }); setStatementPreview(parsed); setStatementReviewed(false); setBusy(false); return;
+        }
       }
-      if (signup && !statementReviewed) throw new Error('Review the statement rows and confirm before continuing.');
-      if (signup && !currencyConfirmed) throw new Error('Confirm that the uploaded statement uses USD.');
-      const res = await api<{ user?: User; business?: Business }>(signup ? '/auth/register' : '/auth/login', { method: 'POST', body: { ...f, ...(signup && { country, bankId, currency: 'USD', statementCurrencyConfirmed: currencyConfirmed, statementFilename: statementFile?.name, statementFileBase64: statementFile?.base64, statementReviewed, duplicatesReviewed: statementReviewed, openingBalanceCents: new FormData(e.currentTarget).get('openingBalance'), closingBalanceCents: new FormData(e.currentTarget).get('closingBalance') }), timezone: Intl.DateTimeFormat().resolvedOptions().timeZone } });
+      if (signup && statementPreview && !statementReviewed) throw new Error('Review the statement rows and confirm before continuing.');
+      if (signup && statementPreview && !currencyConfirmed) throw new Error('Confirm that the uploaded statement uses USD.');
+      if (signup && !policyAccepted) throw new Error('Accept the current Morgan policies before creating your account.');
+      const includeStatement = signup && Boolean(statementPreview && statementFile);
+      const res = await api<{ user?: User; business?: Business }>(signup ? '/auth/register' : '/auth/login', { method: 'POST', body: { ...f, ...(signup && { currency: includeStatement ? 'USD' : form.currency, ...(includeStatement && { country, bankId, statementCurrencyConfirmed: currencyConfirmed, statementFilename: statementFile?.name, statementFileBase64: statementFile?.base64, statementReviewed, duplicatesReviewed: statementReviewed, openingBalanceCents: new FormData(e.currentTarget).get('openingBalance'), closingBalanceCents: new FormData(e.currentTarget).get('closingBalance') }), acceptedPolicies: policies.map(({ id, version }) => ({ policyId: id, version })) }), timezone: Intl.DateTimeFormat().resolvedOptions().timeZone } });
       if (!res.user || !res.business) throw new Error('The server returned an incomplete sign-in response.');
       setDest(signup ? '/app/onboarding' : next);
       setSession({ user: res.user, business: res.business });
@@ -119,7 +130,7 @@ export function Auth({ mode }: { mode: 'login' | 'signup' }) {
 
   async function createDemo() {
     setDemoBusy(true); setError('');
-    try { const res = await api<{ user?: User; business?: Business }>('/auth/demo', { method: 'POST', body: {} }); if (!res.user || !res.business) throw new Error('The server returned an incomplete demo workspace.'); setDest('/app'); setSession({ user: res.user, business: res.business }); }
+    try { if (!policyAccepted) throw new Error('Accept the current Morgan policies before creating a demo account.'); const res = await api<{ user?: User; business?: Business }>('/auth/demo', { method: 'POST', body: { acceptedPolicies: policies.map(({ id, version }) => ({ policyId: id, version })) } }); if (!res.user || !res.business) throw new Error('The server returned an incomplete demo workspace.'); setDest('/app'); setSession({ user: res.user, business: res.business }); }
     catch (err) { setError((err as Error).message); setDemoBusy(false); }
   }
 
@@ -147,7 +158,7 @@ export function Auth({ mode }: { mode: 'login' | 'signup' }) {
       <aside className="auth-stage">
         <span className="folio stage-folio">Preview <b>nothing is saved until you submit</b></span>
         <LedgerCover name={form.name} business={form.businessName} currency={form.currency} strength={strength} />
-        <p className="stage-caption">Your workspace starts empty. Every figure Morgan shows will come from records you add.</p>
+        <p className="stage-caption">Upload a statement to start with reviewed records, or create an empty workspace and add records later.</p>
       </aside>
     }>
       <form className="auth-form" onSubmit={submit}>
@@ -165,12 +176,12 @@ export function Auth({ mode }: { mode: 'login' | 'signup' }) {
           <div className="field"><label htmlFor="currency">Currency</label><select className="select" id="currency" name="currency" value={form.currency} onChange={(e) => set('currency')(e.target.value)}>{CURRENCIES.map((c) => <option key={c}>{c}</option>)}</select></div>
         </div>
         <div className="form-grid two">
-          <div className="field"><label htmlFor="signup-country">Country</label><select className="select" id="signup-country" value={country} onChange={(e) => { setCountry(e.target.value); setBankId(''); }} required><option value="">Select country</option><option value="US">United States</option></select><span className="hint">Bank directory is currently available for US accounts.</span></div>
-          <div className="field"><label htmlFor="signup-currency">Statement currency</label><input className="input" id="signup-currency" value={country === 'US' ? 'USD' : 'Choose a country'} readOnly /></div>
+          <div className="field"><label htmlFor="signup-country">Statement country <span className="muted">(optional)</span></label><select className="select" id="signup-country" value={country} onChange={(e) => { setCountry(e.target.value); setBankId(''); setStatementPreview(null); setStatementFile(null); setStatementReviewed(false); setCurrencyConfirmed(false); }}><option value="">Select only if importing a statement</option><option value="US">United States</option></select><span className="hint">Only needed when you choose to import a bank statement.</span></div>
+          <div className="field"><label htmlFor="signup-currency">Workspace currency</label><input className="input" id="signup-currency" value={statementChoiceName ? 'USD for statement import' : form.currency} readOnly /><span className="hint">{statementChoiceName ? 'Statement imports require USD, so this workspace will use USD.' : 'Without a statement import, Morgan uses the workspace currency selected above.'}</span></div>
         </div>
         <div className="form-grid two">
-          <div className="field"><label htmlFor="bank-search">Search bank</label><input className="input" id="bank-search" value={bankQuery} onChange={(e) => { setBankQuery(e.target.value); setBankId(''); }} placeholder="Search FDIC’s top 100 by assets" disabled={country !== 'US'} /><select className="select" aria-label="Select bank" value={bankId} onChange={(e) => setBankId(e.target.value)} required disabled={country !== 'US' || banksLoading}><option value="">{banksLoading ? 'Loading bank directory…' : 'Select a bank · top 100 by assets'}</option>{banks.map((b) => <option key={b.id} value={b.id}>{b.name} · {b.state}</option>)}</select><span className="hint">{banksError || 'Source: FDIC BankFind Suite · active insured US institutions, ranked by reported assets.'}</span></div>
-        <div className="field"><label htmlFor="statement">Bank statement · PDF, CSV, or XLSX</label><input className="input" id="statement" name="statement" type="file" accept=".pdf,.csv,.xlsx,application/pdf,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" required={!statementFile} onChange={() => { setStatementPreview(null); setStatementReviewed(false); setCurrencyConfirmed(false); setStatementFile(null); }} /><span className="hint">Maximum 10 MB. Scanned image-only PDFs are not supported; export a selectable-text PDF or CSV.</span></div>
+          <div className="field"><label htmlFor="bank-search">Bank for statement <span className="muted">(optional)</span></label><input className="input" id="bank-search" value={bankQuery} onChange={(e) => { setBankQuery(e.target.value); setBankId(''); setStatementPreview(null); }} placeholder="Search FDIC’s top 100 by assets" disabled={country !== 'US'} /><select className="select" aria-label="Select bank for statement import" value={bankId} onChange={(e) => { setBankId(e.target.value); setStatementPreview(null); }} disabled={country !== 'US' || banksLoading}><option value="">{banksLoading ? 'Loading bank directory…' : 'Select a bank if importing a statement'}</option>{banks.map((b) => <option key={b.id} value={b.id}>{b.name} · {b.state}</option>)}</select><span className="hint">{banksError || 'Only needed when importing a statement.'}</span></div>
+        <div className="field"><label htmlFor="statement">Bank statement <span className="muted">(optional)</span></label><input className="input" id="statement" name="statement" type="file" accept=".pdf,.csv,.xlsx,application/pdf,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" onChange={(e) => { setStatementChoiceName(e.target.files?.[0]?.name || ''); setStatementPreview(null); setStatementReviewed(false); setCurrencyConfirmed(false); setStatementFile(null); }} /><span className="hint">You can create your account without uploading one. To import now: PDF, CSV, or XLSX, maximum 10 MB. Scanned image-only PDFs are not supported.</span></div>
         </div>
         {statementPreview && <section className="panel statement-signup-review" aria-label="Statement review">
           <h2>Review extracted statement</h2><p className="muted">{statementFile?.name} · {statementPreview.summary.count} transactions · {statementPreview.summary.periodStart} to {statementPreview.summary.periodEnd}. These rows were extracted from the uploaded file. {statementPreview.summary.duplicates ? `${statementPreview.summary.duplicates} repeated rows will be skipped.` : 'No repeated rows detected.'}</p>
@@ -181,7 +192,8 @@ export function Auth({ mode }: { mode: 'login' | 'signup' }) {
         </section>}
         <PasswordField id="password" name="password" label="Password" autoComplete="new-password" value={form.password} onChange={set('password')} showRules />
         <PasswordField id="confirm" name="confirm" label="Confirm password" autoComplete="new-password" />
-        <button className="btn primary lg" type="submit" disabled={busy || (statementPreview !== null && (!statementReviewed || !currencyConfirmed))}>{busy && <span className="spinner" />}{busy ? (statementPreview ? 'Creating secure workspace…' : 'Reading statement…') : statementPreview ? 'Create account with reviewed statement' : 'Review statement'}</button>
+        <label className="check-row policy-acceptance"><input type="checkbox" checked={policyAccepted} onChange={(e) => setPolicyAccepted(e.target.checked)} required={!statementChoiceName || !!statementPreview} /><span>I have read and agree to Morgan's <Link to="/policies/terms-of-use" target="_blank" rel="noreferrer">Terms of Use</Link>, <Link to="/policies/privacy-policy" target="_blank" rel="noreferrer">Privacy Policy</Link>, and <Link to="/policies/refund-policy" target="_blank" rel="noreferrer">Refund Policy</Link>.</span></label>
+        <button className="btn primary lg" type="submit" disabled={busy || (!statementChoiceName && !policyAccepted) || (statementPreview !== null && (!statementReviewed || !currencyConfirmed || !policyAccepted))}>{busy && <span className="spinner" />}{busy ? (statementPreview ? 'Creating secure workspace…' : statementChoiceName ? 'Reading statement…' : 'Creating account…') : statementPreview ? 'Create account with statement' : statementChoiceName ? 'Review statement' : 'Create account'}</button>
         <div className="demo-account-action"><span className="eyebrow">Want to explore first?</span><button className="btn outline" type="button" onClick={createDemo} disabled={demoBusy}>{demoBusy && <span className="spinner" />}{demoBusy ? 'Preparing simulated workspace…' : 'Create Demo Account'}</button><small>Opens a separate sandbox filled with simulated financial records. No personal or bank information needed.</small></div>
         <p className="auth-switch">Already have an account? <Link className="link" to="/login">Log in</Link></p>
       </form>

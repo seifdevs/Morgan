@@ -200,7 +200,7 @@ html { scroll-padding-top: calc(var(--nav-h) + 24px); }
 .pf-inner { max-width: 1320px; margin: 0 auto; padding: 72px var(--gut) 56px; display: grid; grid-template-columns: repeat(12, minmax(0, 1fr)); column-gap: 24px; align-items: start; }
 .pf-close { grid-column: 1 / 7; display: grid; gap: 22px; justify-items: start; }
 .pf-line { font: 650 clamp(24px, 2.6vw, 36px)/1.15 var(--display); letter-spacing: -0.03em; max-width: 520px; }
-.pf-cols { grid-column: 8 / 13; display: grid; grid-template-columns: repeat(3, 1fr); gap: 24px; }
+.pf-cols { grid-column: 8 / 13; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 24px; }
 .pf-cols h4 { font: 500 11px var(--mono); letter-spacing: .08em; text-transform: uppercase; color: var(--gold); margin-bottom: 14px; }
 .pf-cols a { display: block; padding: 6px 0; color: var(--soft); font-size: 14px; transition: color .15s; }
 .pf-cols a:hover { color: var(--text); }

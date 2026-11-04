@@ -147,6 +147,7 @@ test('registration succeeds without a bank statement and creates an empty worksp
   assert.equal(await db.collection('bankAccounts').countDocuments({ businessId }), 0);
   assert.equal(await db.collection('statementImports').countDocuments({ businessId }), 0);
   assert.equal(await db.collection('transactions').countDocuments({ businessId }), 0);
+  assert.equal((await account.call('PATCH', '/financial-setup', { cashAccounts: [], onboardingStep: 1 })).status, 200, 'onboarding can continue without a statement or manually entered opening balance');
 });
 
 test('policy updates require version-specific reacceptance before protected use resumes', async () => {

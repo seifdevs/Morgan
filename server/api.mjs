@@ -633,7 +633,6 @@ export function createApi(db, { secureCookies }) {
         const step = int(b.onboardingStep, 'Onboarding step', { min: 0, max: 4 });
         const currentStep = before.onboardingStep || 0;
         if (step < currentStep || step > currentStep + 1) throw bad('Complete each onboarding step in order.');
-        if (step > currentStep && currentStep === 0 && await C('statementImports').countDocuments(scoped(req)) < 1) throw bad('A reviewed statement is required before onboarding can continue.');
         if (step > currentStep && currentStep === 1 && b.expectedActivityReviewed !== true) throw bad('Confirm that you reviewed expected income and recurring expenses, including if you have none to add.');
         if (step > currentStep && currentStep === 2) {
           const budgetCents = b.monthlyBudgetCents === undefined ? before.monthlyBudgetCents : set.monthlyBudgetCents;

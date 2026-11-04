@@ -707,3 +707,50 @@
   .mx-plan, .mx-plan:last-child { min-height: 0; padding: 22px 18px; border: 1px solid #27313C; }
   .mx-plan-pro { border-color: #806B45; }
 }
+
+/* Shared public-site finish: clear hierarchy, restrained surfaces, and consistent actions. */
+.public-site .mast { border-bottom: 1px solid #27313C; }
+.public-site .mast-links a { border-radius: 4px; font-size: 13px; }
+.public-site .mast-links a:hover, .public-site .mast-links a.active { background: #121820; }
+.public-site .mast-ul { bottom: 0; height: 2px; }
+.public-site .mast-actions { gap: 18px; }
+.public-site .mast-actions > .btn { min-height: 40px; padding-inline: 15px; font-size: 12px; font-weight: 700; }
+.public-site .mast-login { font-size: 13px; }
+.public-site .page-intro .pi-title { max-width: 900px; }
+.public-site .page-intro h1 { text-wrap: balance; }
+.public-site .page-intro .lead { max-width: 520px; line-height: 1.75; }
+.public-site .page > .cta-band { gap: 16px 24px; margin-top: clamp(56px, 8vw, 96px); padding: clamp(25px, 4vw, 42px); border: 1px solid #27313C; border-left: 2px solid #C9A86A; border-radius: 5px; background: #121820; }
+.public-site .page .cta-band h2 { grid-column: 1 / 9; align-self: center; font-size: clamp(28px, 4vw, 42px); line-height: 1.05; text-wrap: balance; }
+.public-site .page .cta-band .btn { grid-column: 10 / 13; justify-self: stretch; min-height: 48px; font-size: 13px; }
+.mx-faq-item { border-radius: 4px; transition: background-color .18s ease; }
+.mx-faq-item:hover, .mx-faq-item.is-open { background: #121820; }
+.mx-faq-item .mx-faq-toggle { min-height: 64px; padding-inline: 9px; }
+.mx-faq-answer > div { padding-inline: 47px 36px; }
+.mx-faq-answer p { margin: 0 0 16px; color: var(--m-ink-700); font-size: 13px; line-height: 1.7; }
+.mx-pricing .mx-plan { min-height: 340px; padding: clamp(19px, 2.4vw, 30px); border: 1px solid #27313C; border-radius: 5px; background: #121820; }
+.mx-pricing .mx-plan:last-child { border: 1px solid #27313C; }
+.mx-pricing .mx-plan-pro { border-color: #806B45; box-shadow: 0 0 0 1px #C9A86A22; }
+.mx-pricing .mx-plan > .mx-button { width: 100%; min-height: 47px; margin-top: auto; justify-content: center; font-size: 12px; }
+.mx-pricing .mx-plan-price { flex-wrap: wrap; }
+.mx-pricing .mx-plan-price span { flex-basis: 100%; }
+.mx-pricing .mx-plan li { font-size: 11px; }
+.mx-pricing .mx-plan li::before { content: '✓'; top: 0; width: auto; height: auto; border: 0; color: var(--m-forest-800); font-size: 11px; }
+.mx-text-link { text-underline-offset: 4px; text-decoration-color: transparent; transition: text-decoration-color .18s ease, color .18s ease; }
+.mx-text-link:hover { text-decoration: underline; text-decoration-color: currentColor; }
+.public-site .pf-cols a { min-height: 32px; display: flex; align-items: center; text-underline-offset: 4px; text-decoration-color: transparent; }
+.public-site .pf-cols a:hover { text-decoration: underline; text-decoration-color: currentColor; }
+@media (max-width: 1000px) {
+  .public-site .page > .cta-band h2, .public-site .page .cta-band .btn { grid-column: 1 / -1; }
+  .public-site .page .cta-band .btn { justify-self: start; width: min(100%, 320px); }
+  .mx-pricing .mx-plan { min-height: 0; }
+}
+@media (max-width: 760px) {
+  .public-site .mast-links a:hover, .public-site .mast-links a.active { background: transparent; }
+  .public-site .page > .cta-band { padding: 23px 18px; }
+  .public-site .page .cta-band .btn { width: 100%; }
+  .mx-faq-item .mx-faq-toggle { min-height: 62px; padding-inline: 6px; }
+  .mx-faq-answer > div { padding-inline: 40px 15px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .mx-faq-item, .mx-text-link, .public-site .pf-cols a { transition-duration: .01ms; }
+}

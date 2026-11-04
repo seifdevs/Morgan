@@ -532,6 +532,58 @@
 .mx-pricing-faq summary { color: var(--m-ink-900); font-size: 13px; font-weight: 650; cursor: pointer; }
 .mx-pricing-faq details p { max-width: 760px; margin-top: 9px; color: var(--m-ink-700); font-size: 12px; line-height: 1.7; }
 
+/* Pricing refresh: make plan choices scannable and actions easy to find. */
+.mx-pricing-page .page-intro { padding-bottom: clamp(34px, 5vw, 62px); }
+.mx-full-pricing { margin-top: 8px; }
+.mx-pricing-bar { align-items: center; padding: 18px 0; }
+.mx-pricing-bar > div:first-child { display: grid; gap: 7px; }
+.mx-pricing-bar > div:first-child small { color: var(--m-ink-500); font-size: 11px; }
+.mx-billing-toggle { border-radius: 5px; padding: 4px; }
+.mx-billing-toggle button { min-height: 40px; padding-inline: 16px; border-radius: 3px; font-weight: 600; }
+.mx-billing-toggle button[aria-pressed='true'] { color: var(--m-forest-950); background: var(--m-forest-800); }
+.mx-billing-toggle button span { margin-left: 5px; font-size: 9px; color: inherit; opacity: .8; }
+.mx-plan-layout { gap: 16px; padding: 18px 0 28px; border: 0; }
+.mx-plan { position: relative; min-width: 0; min-height: 0; padding: clamp(21px, 2.2vw, 29px); background: #121820; border: 1px solid #27313C; border-radius: 7px; box-shadow: 0 14px 34px -28px #000; }
+.mx-plan:last-child { border: 1px solid #27313C; }
+.mx-plan-pro { border-color: #806B45; box-shadow: 0 0 0 1px #C9A86A22, 0 20px 45px -32px #C9A86A66; }
+.mx-plan-top { display: flex; justify-content: space-between; align-items: flex-start; gap: 10px; }
+.mx-plan-top h3 { margin-top: 8px; font-size: 27px; }
+.mx-plan-badge { flex: none; padding: 6px 8px; border: 1px solid #806B45; border-radius: 3px; color: var(--m-forest-800); font: 650 8px var(--mono); letter-spacing: .07em; }
+.mx-plan-summary { min-height: 42px; margin-top: 10px; color: var(--m-ink-700); font-size: 12px; line-height: 1.55; }
+.mx-plan-price { flex-wrap: wrap; row-gap: 6px; margin-top: 22px; }
+.mx-plan-price b { font-size: clamp(34px, 3.4vw, 44px); }
+.mx-plan-price span { flex-basis: 100%; color: var(--m-ink-500); }
+.mx-plan-note { min-height: 19px; margin-top: 8px; color: var(--m-forest-800); }
+.mx-entitlement-note { flex: 1; margin: 18px 0 18px; padding: 15px; border: 1px solid #27313C; border-radius: 4px; background: #0B0F14; }
+.mx-entitlement-note > b { color: var(--m-ink-900); font-size: 11px; }
+.mx-plan ul { gap: 10px; }
+.mx-plan li { padding-left: 19px; font-size: 11px; }
+.mx-plan li::before { content: '✓'; top: 0; width: auto; height: auto; border: 0; color: var(--m-forest-800); font-size: 11px; }
+.mx-entitlement-note > small { display: block; padding-top: 10px; border-top: 1px solid #27313C; font-size: 10px; }
+.mx-plan-cta { width: 100%; min-height: 50px; margin-top: auto; padding: 0 16px; display: inline-flex; justify-content: center; align-items: center; gap: 10px; border: 1px solid var(--m-forest-800); border-radius: 4px; background: var(--m-forest-800); color: var(--m-forest-950); font-size: 13px; font-weight: 700; transition: transform .18s var(--m-ease-out), background-color .18s var(--m-ease-out), box-shadow .18s var(--m-ease-out); }
+.mx-plan-cta:hover { transform: translateY(-2px); background: #D6B978; box-shadow: 0 8px 22px #C9A86A33; }
+.mx-plan-cta:focus-visible { outline: 2px solid var(--m-forest-800); outline-offset: 3px; }
+.mx-plan-cta-quiet { border-color: #46515C; background: #19212B; color: var(--m-ink-900); }
+.mx-plan-cta-quiet:hover { background: #27313C; color: var(--m-ink-900); }
+.mx-plan-cta-note { display: block; margin-top: 9px; color: var(--m-ink-500); font-size: 9px; line-height: 1.45; text-align: center; }
+.mx-pricing-page .mx-trial-note { margin-top: 12px; padding-block: 23px; }
+@media (max-width: 1000px) {
+  .mx-plan-layout { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .mx-plan:last-child { grid-column: 1 / -1; border-top: 1px solid #27313C; }
+}
+@media (max-width: 620px) {
+  .mx-pricing-bar { align-items: flex-start; }
+  .mx-billing-toggle { width: 100%; }
+  .mx-billing-toggle button { flex: 1; padding-inline: 8px; }
+  .mx-plan-layout { grid-template-columns: 1fr; gap: 12px; }
+  .mx-plan, .mx-plan:last-child { grid-column: auto; padding: 22px 18px; }
+  .mx-plan-summary { min-height: 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .mx-plan-cta { transition-duration: .01ms; }
+  .mx-plan-cta:hover { transform: none; }
+}
+
 /* Footer */
 .public-site .pub-footer { background: #19212B; border-top-color: var(--m-rule); color: var(--m-ink-900); }
 .public-site .pf-line { color: var(--m-ink-700); }
@@ -649,4 +701,9 @@
 @media (prefers-reduced-motion: reduce) {
   .mx-button, .mx-text-link svg, .mx-pillar-tabs button, .mx-faq-item .mx-faq-toggle > i { transition-duration: .01ms; }
   .mx-button:hover { transform: none; }
+}
+@media (max-width: 760px) {
+  .mx-plan-layout { grid-template-columns: 1fr; }
+  .mx-plan, .mx-plan:last-child { min-height: 0; padding: 22px 18px; border: 1px solid #27313C; }
+  .mx-plan-pro { border-color: #806B45; }
 }

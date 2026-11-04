@@ -83,7 +83,6 @@ export function Auth({ mode }: { mode: 'login' | 'signup' }) {
   const [statementReviewed, setStatementReviewed] = useState(false);
   const [currencyConfirmed, setCurrencyConfirmed] = useState(false);
   const [policyAccepted, setPolicyAccepted] = useState(false);
-  const [demoBusy, setDemoBusy] = useState(false);
   const set = (k: keyof typeof form) => (v: string) => setForm((f) => ({ ...f, [k]: v }));
   useEffect(() => {
     if (!signup || country !== 'US') { setBanks([]); setBanksLoading(false); setBanksError(''); return; }
@@ -126,12 +125,6 @@ export function Auth({ mode }: { mode: 'login' | 'signup' }) {
       setError((err as Error).message);
       setBusy(false);
     }
-  }
-
-  async function createDemo() {
-    setDemoBusy(true); setError('');
-    try { if (!policyAccepted) throw new Error('Accept the current Morgan policies before creating a demo account.'); const res = await api<{ user?: User; business?: Business }>('/auth/demo', { method: 'POST', body: { acceptedPolicies: policies.map(({ id, version }) => ({ policyId: id, version })) } }); if (!res.user || !res.business) throw new Error('The server returned an incomplete demo workspace.'); setDest('/app'); setSession({ user: res.user, business: res.business }); }
-    catch (err) { setError((err as Error).message); setDemoBusy(false); }
   }
 
   const strength = rules(form.password).filter((r) => r.ok).length;
@@ -194,7 +187,6 @@ export function Auth({ mode }: { mode: 'login' | 'signup' }) {
         <PasswordField id="confirm" name="confirm" label="Confirm password" autoComplete="new-password" />
         <label className="check-row policy-acceptance"><input type="checkbox" checked={policyAccepted} onChange={(e) => setPolicyAccepted(e.target.checked)} required={!statementChoiceName || !!statementPreview} /><span>I have read and agree to Morgan's <Link to="/policies/terms-of-use" target="_blank" rel="noreferrer">Terms of Use</Link>, <Link to="/policies/privacy-policy" target="_blank" rel="noreferrer">Privacy Policy</Link>, and <Link to="/policies/refund-policy" target="_blank" rel="noreferrer">Refund Policy</Link>.</span></label>
         <button className="btn primary lg" type="submit" disabled={busy || (!statementChoiceName && !policyAccepted) || (statementPreview !== null && (!statementReviewed || !currencyConfirmed || !policyAccepted))}>{busy && <span className="spinner" />}{busy ? (statementPreview ? 'Creating secure workspace…' : statementChoiceName ? 'Reading statement…' : 'Creating account…') : statementPreview ? 'Create account with statement' : statementChoiceName ? 'Review statement' : 'Create account'}</button>
-        <div className="demo-account-action"><span className="eyebrow">Want to explore first?</span><button className="btn outline" type="button" onClick={createDemo} disabled={demoBusy}>{demoBusy && <span className="spinner" />}{demoBusy ? 'Preparing simulated workspace…' : 'Create Demo Account'}</button><small>Opens a separate sandbox filled with simulated financial records. No personal or bank information needed.</small></div>
         <p className="auth-switch">Already have an account? <Link className="link" to="/login">Log in</Link></p>
       </form>
     </AuthShell>

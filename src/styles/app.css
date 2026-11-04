@@ -429,8 +429,6 @@ a.list-row:hover { background: #ffffff05; }
 .statement-signup-review h2,.statement-signup-review p { margin:0; }
 .signup-statement-table { max-height:280px; overflow:auto; }
 .signup-statement-table .table { min-width:600px; }
-.demo-account-action { display:grid; gap:8px; border-top:1px solid var(--line); padding-top:18px; margin-top:6px; }
-.demo-account-action small { color:var(--muted); font-size:12px; line-height:1.5; }
 @media(max-width:700px) { .demo-banner { align-items:flex-start; flex-direction:column; gap:4px; padding:11px 16px; } }
 
 /* ---------- Morgan Horizon, Monitor and core hub ---------- */

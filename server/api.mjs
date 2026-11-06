@@ -1,6 +1,6 @@
 import express from 'express';
 import { ObjectId } from 'mongodb';
-import { randomBytes, createHash, randomUUID } from 'node:crypto';
+import { randomBytes, randomInt, createHash, randomUUID } from 'node:crypto';
 import { invoiceTotals, formatMoney } from '../shared/money.js';
 import {
   HttpError, bad, str, email, date, cents, int, oneOf, oid, today, addDays, escapeRegex,
@@ -12,6 +12,7 @@ import {
 import { invoicePdf } from './lib/pdf.mjs';
 import { financialReportPdf } from './lib/reportPdf.mjs';
 import { mailConfigured, sendMail, notifyMail, localEmailPreviewEnabled, listLocalEmailPreviews } from './lib/mail.mjs';
+import { verificationEmail } from './lib/emailTemplates.mjs';
 import * as A from './lib/analytics.mjs';
 import { horizonForecast } from './lib/horizon.mjs';
 import { askGemini, formattedMoneyValues, validateGeminiAnswer } from './lib/gemini.mjs';
@@ -117,10 +118,12 @@ export function createApi(db, { secureCookies }) {
   const emailLink = (path, token) => `${appOrigin()}/${path}?token=${encodeURIComponent(token)}`;
   const sendVerification = async (user) => {
     const token = randomBytes(32).toString('base64url');
+    const code = String(randomInt(0, 1_000_000)).padStart(6, '0');
     await C('verificationTokens').deleteMany({ userId: user._id });
-    await C('verificationTokens').insertOne({ _id: hashToken(token), userId: user._id, expiresAt: new Date(Date.now() + 24 * 3600e3) });
+    await C('verificationTokens').insertOne({ _id: hashToken(token), codeHash: hashToken(`${String(user._id)}:${code}`), userId: user._id, expiresAt: new Date(Date.now() + 24 * 3600e3) });
     try {
-      return await sendMail({ db, kind: 'verification', to: user.email, subject: 'Verify your Morgan email', text: `Hi ${user.name},\n\nVerify your email address to finish creating your Morgan account. This link expires in 24 hours and can only be used once:\n${emailLink('verify-email', token)}\n\nIf you did not create this account, you can ignore this message.` });
+      const content = verificationEmail({ name: user.name, code, link: emailLink('verify-email', token) });
+      return await sendMail({ db, kind: 'verification', to: user.email, ...content });
     } catch (error) {
       return { status: error.deliveryStatus || 'unknown', code: error.code || 'DELIVERY_FAILED', providerStatus: error.providerStatus ?? null, message: error.message, retryable: Boolean(error.retryable) };
     }
@@ -294,9 +297,15 @@ export function createApi(db, { secureCookies }) {
     res.status(201).json({ user: publicUser(user), business: publicBusiness(businessDoc) });
   }));
 
-  r.post('/auth/verify-email', rateLimit({ key: 'verify-email', limit: 10, windowMs: 3600e3 }), wrap(async (req, res) => {
+  r.post('/auth/verify-email', rateLimit({ key: 'verify-email', limit: 10, windowMs: 3600e3, byEmail: true }), wrap(async (req, res) => {
     const token = typeof req.body?.token === 'string' ? req.body.token : '';
-    const entry = token && await C('verificationTokens').findOneAndDelete({ _id: hashToken(token), expiresAt: { $gt: new Date() } });
+    let entry;
+    if (token) entry = await C('verificationTokens').findOneAndDelete({ _id: hashToken(token), expiresAt: { $gt: new Date() } });
+    else if (typeof req.body?.code === 'string' && /^\d{6}$/.test(req.body.code)) {
+      const mail = email(req.body?.email);
+      const user = await C('users').findOne({ email: mail, emailVerified: { $ne: true } });
+      if (user) entry = await C('verificationTokens').findOneAndDelete({ userId: user._id, codeHash: hashToken(`${String(user._id)}:${req.body.code}`), expiresAt: { $gt: new Date() } });
+    }
     if (!entry) throw new HttpError(400, 'This verification link is invalid or has expired. Request a new one.');
     const user = await C('users').findOne({ _id: entry.userId });
     if (!user) throw new HttpError(400, 'This verification link is invalid or has expired. Request a new one.');

@@ -84,6 +84,7 @@ export function Auth({ mode }: { mode: 'login' | 'signup' }) {
   const [currencyConfirmed, setCurrencyConfirmed] = useState(false);
   const [policyAccepted, setPolicyAccepted] = useState(false);
   const [verificationPending, setVerificationPending] = useState<{ email: string; status: string; message?: string | null } | null>(null);
+  const [verificationComplete, setVerificationComplete] = useState(false);
   const set = (k: keyof typeof form) => (v: string) => setForm((f) => ({ ...f, [k]: v }));
   useEffect(() => {
     if (!signup || country !== 'US') { setBanks([]); setBanksLoading(false); setBanksError(''); return; }
@@ -155,11 +156,14 @@ export function Auth({ mode }: { mode: 'login' | 'signup' }) {
   if (verificationPending) {
     const accepted = verificationPending.status === 'accepted';
     return <AuthShell kind="signup" stage={<aside className="auth-stage"><span className="folio stage-folio">Almost there</span><LedgerCover name={form.name} business={form.businessName} currency={form.currency} strength={strength} /><p className="stage-caption">Verify your email to unlock your Morgan workspace.</p></aside>}>
-      <div className="auth-form"><h1>Check your email</h1><p>We created your account for <b>{verificationPending.email}</b>. Verify the address before signing in.</p>
-        <div className={accepted ? 'auth-success' : 'form-error'} role="status">{accepted ? 'Resend accepted the verification email request. Inbox delivery is not confirmed.' : verificationPending.message || 'The account is saved, but Resend could not accept the verification email yet.'}</div>
-        <p className="muted">The link expires in 24 hours and works once. If it does not arrive, you can request another message below.</p>
-        <ResendVerification initialEmail={verificationPending.email} />
-        <p className="auth-switch">Already verified? <Link className="link" to="/login">Log in</Link></p>
+      <div className="auth-form"><h1>{verificationComplete ? 'Email verified' : 'Check your email'}</h1><p>{verificationComplete ? 'Your Morgan account is ready. Sign in to continue.' : <>We created your account for <b>{verificationPending.email}</b>. Verify the address before signing in.</>}</p>
+        {verificationComplete ? <><div className="auth-success" role="status">Email confirmed. Your workspace is ready.</div><Link className="btn primary lg" to="/login">Continue to log in</Link></> : <>
+          <div className={accepted ? 'auth-success' : 'form-error'} role="status">{accepted ? 'Resend accepted the verification email request. Inbox delivery is not confirmed.' : verificationPending.message || 'The account is saved, but Resend could not accept the verification email yet.'}</div>
+          <VerificationCodeForm initialEmail={verificationPending.email} onVerified={() => setVerificationComplete(true)} />
+          <p className="muted">The code and link expire in 24 hours and work once. You can request a fresh email below.</p>
+          <ResendVerification initialEmail={verificationPending.email} />
+        </>}
+        {!verificationComplete && <p className="auth-switch">Already verified? <Link className="link" to="/login">Log in</Link></p>}
       </div>
     </AuthShell>;
   }
@@ -229,19 +233,40 @@ function ResendVerification({ initialEmail = '' }: { initialEmail?: string }) {
   return <form className="form-grid" onSubmit={submit}><label className="sr-only" htmlFor="resend-email">Email address</label><input className="input" id="resend-email" type="email" required value={emailValue} onChange={(e) => setEmailValue(e.target.value)} placeholder="Email address" />{error && <span className="form-error" role="alert">{error}</span>}{status && <span className="muted" role="status">{status}</span>}{canRetry && <button className="btn outline" disabled={busy}>{busy ? 'Requesting…' : 'Resend verification email'}</button>}</form>;
 }
 
+function VerificationCodeForm({ initialEmail = '', onVerified }: { initialEmail?: string; onVerified: () => void }) {
+  const [emailValue, setEmailValue] = useState(initialEmail);
+  const [code, setCode] = useState('');
+  const [error, setError] = useState('');
+  const [busy, setBusy] = useState(false);
+  async function submit(e: FormEvent) {
+    e.preventDefault(); setBusy(true); setError('');
+    try {
+      await api('/auth/verify-email', { method: 'POST', body: { email: emailValue, code } });
+      onVerified();
+    } catch (err) { setError((err as Error).message); }
+    finally { setBusy(false); }
+  }
+  return <form className="form-grid verification-code-form" onSubmit={submit}>
+    {!initialEmail && <div className="field"><label htmlFor="verification-code-email">Email address</label><input className="input" id="verification-code-email" type="email" autoComplete="email" required value={emailValue} onChange={(e) => setEmailValue(e.target.value)} /></div>}
+    <label className="field"><span>6-digit verification code</span><div className="verification-code-slots">{Array.from({ length: 6 }, (_, index) => <span key={index} aria-hidden="true">{code[index] || ''}</span>)}<input id="verification-code" type="text" inputMode="numeric" autoComplete="one-time-code" pattern="[0-9]{6}" maxLength={6} required value={code} onChange={(e) => setCode(e.target.value.replace(/\D/g, '').slice(0, 6))} aria-label="6-digit verification code" aria-describedby="verification-code-hint" /></div><span className="hint" id="verification-code-hint">Enter the code shown in your Morgan email.</span></label>
+    {error && <span className="form-error" role="alert">{error}</span>}
+    <button className="btn primary" disabled={busy || code.length !== 6}>{busy ? 'Verifying…' : 'Verify email'}</button>
+  </form>;
+}
+
 export function VerifyEmail() {
   useDocumentTitle('Verify your email', 'Complete email verification for your Morgan account.', { indexable: false });
   const [params] = useSearchParams();
   const token = params.get('token') || '';
-  const [state, setState] = useState<'busy' | 'verified' | 'error'>(token ? 'busy' : 'error');
+  const [state, setState] = useState<'busy' | 'verified' | 'error' | 'code'>(token ? 'busy' : 'code');
   const [message, setMessage] = useState('');
   useEffect(() => {
-    if (!token) { setMessage('This link is missing its verification token. Request a fresh one below.'); return; }
+    if (!token) return;
     api<{ welcomeEmail: { status: string } }>('/auth/verify-email', { method: 'POST', body: { token } })
       .then((result) => { setState('verified'); setMessage(result.welcomeEmail.status === 'accepted' ? 'Your address is verified. Resend accepted the welcome email request; inbox delivery is not confirmed.' : result.welcomeEmail.status === 'rejected' ? 'Your address is verified. Resend rejected the welcome email request.' : result.welcomeEmail.status === 'unknown' ? 'Your address is verified. Morgan could not confirm whether the welcome email was accepted.' : 'Your address is verified. The welcome email could not be sent.'); })
       .catch((err) => { setState('error'); setMessage((err as Error).message); });
   }, [token]);
-  return <AuthShell kind="login" stage={<LoginStage headline={<>Your email,<br /><span>secured.</span></>} sub="Email verification helps protect access to your Morgan workspace." />}><div className="auth-form"><h1>{state === 'busy' ? 'Verifying your email…' : state === 'verified' ? 'Email verified' : 'Verification needed'}</h1>{message && <div className={state === 'verified' ? 'auth-success' : 'form-error'} role="status">{message}</div>}{state === 'verified' ? <p className="auth-switch"><Link className="link" to="/login">Continue to log in</Link></p> : <><p className="muted">Verification links expire after 24 hours and work once. A duplicate or expired link needs a new message.</p><ResendVerification /></>}</div></AuthShell>;
+  return <AuthShell kind="login" stage={<LoginStage headline={<>Your email,<br /><span>secured.</span></>} sub="Email verification helps protect access to your Morgan workspace." />}><div className="auth-form"><h1>{state === 'busy' ? 'Verifying your email…' : state === 'verified' ? 'Email verified' : state === 'error' ? 'Verification needed' : 'Enter your code'}</h1>{message && <div className={state === 'verified' ? 'auth-success' : 'form-error'} role="status">{message}</div>}{state === 'verified' ? <p className="auth-switch"><Link className="link" to="/login">Continue to log in</Link></p> : <><p className="muted">Enter the six-digit code from your email, or use the secure verification link. Both expire after 24 hours and work once.</p><VerificationCodeForm onVerified={() => { setState('verified'); setMessage('Your email is verified. You can now sign in to Morgan.'); }} /><ResendVerification /></>}</div></AuthShell>;
 }
 
 export function ForgotPassword() {

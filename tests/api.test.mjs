@@ -67,12 +67,21 @@ function agent() {
 }
 
 const rawReg = (a, email, extra = {}) => a.call('POST', '/auth/register', { name: 'Owner', email, password: 'correct horse 42', businessName: 'Biz ' + email, country: 'US', bankId: '628', currency: 'USD', statementCurrencyConfirmed: true, statementFilename: 'statement.csv', statementFileBase64: Buffer.from('Date,Description,Amount\n2026-10-01,Sample row,1.00').toString('base64'), openingBalanceCents: 0, closingBalanceCents: 100, statementReviewed: true, acceptedPolicies, ...extra });
-async function tokenFromLatest(email, subject = 'Verify your Morgan email') {
+async function tokenFromLatest(email, subject = 'Your Morgan verification code') {
   const msg = [...resendRequests].reverse().find((m) => m.to?.includes(email.toLowerCase()) && m.subject === subject);
   assert.ok(msg, `expected a Resend request for ${subject}`);
   const match = new RegExp(`${subject.startsWith('Reset') ? 'reset-password' : 'verify-email'}\\?token=([\\w-]+)`).exec(msg.text);
   assert.ok(match, 'email includes a one-time link');
   return match[1];
+}
+async function codeFromLatest(email) {
+  const message = [...resendRequests].reverse().find((item) => item.to?.includes(email.toLowerCase()) && item.subject === 'Your Morgan verification code');
+  assert.ok(message, 'verification email uses the branded verification subject');
+  const match = /\b\d(?:\s+\d){5}\b/.exec(message.text);
+  assert.ok(match, 'email includes a six-digit verification code');
+  assert.match(message.html, /<h1[^>]*>One step left/);
+  assert.match(message.html, /Verify email address/);
+  return match[0].replace(/\s/g, '');
 }
 async function verifySignup(a, email) {
   const token = await tokenFromLatest(email);
@@ -131,7 +140,7 @@ test('registration validates input and rejects duplicates', async () => {
   assert.equal(await db.collection('policyAcceptances').countDocuments({ userId: stored._id, source: 'registration' }), 3);
   assert.equal(stored.emailVerified, false);
   assert.equal(await db.collection('verificationTokens').countDocuments({ userId: stored._id }), 1);
-  assert.ok(resendRequests.some((m) => m.subject === 'Verify your Morgan email' && m.to.includes('alice@example.com')));
+  assert.ok(resendRequests.some((m) => m.subject === 'Your Morgan verification code' && m.to.includes('alice@example.com')));
   assert.equal((await a.call('GET', '/transactions')).status, 401, 'unverified account cannot access the dashboard');
   await verifySignup(a, 'alice@example.com');
   assert.equal((await db.collection('users').findOne({ email: 'alice@example.com' })).emailVerified, true);
@@ -255,6 +264,18 @@ test('verification handles invalid, expired, used links and resend requests', as
   assert.ok(resendRequests.some((m) => m.subject === 'Welcome to Morgan' && m.to.includes('verify-lifecycle@example.com')));
   assert.equal((await a.call('POST', '/auth/verify-email', { token: fresh })).status, 400, 'used verification token cannot be replayed');
   assert.equal((await a.call('POST', '/auth/resend-verification', { email: 'verify-lifecycle@example.com' })).body.emailStatus, 'unknown', 'verified addresses do not receive another verification link');
+});
+
+test('segmented verification code activates an account once', async () => {
+  const a = agent(), address = 'code-verification@example.com';
+  assert.equal((await rawReg(a, address)).status, 201);
+  const code = await codeFromLatest(address);
+  const wrong = `${code[0] === '0' ? '1' : '0'}${code.slice(1)}`;
+  assert.equal((await a.call('POST', '/auth/verify-email', { email: address, code: wrong })).status, 400);
+  const verified = await a.call('POST', '/auth/verify-email', { email: address, code });
+  assert.equal(verified.status, 200);
+  assert.equal((await db.collection('users').findOne({ email: address })).emailVerified, true);
+  assert.equal((await a.call('POST', '/auth/verify-email', { email: address, code })).status, 400, 'code is single-use');
 });
 
 test('login, session persistence, logout invalidates the session server-side', async () => {

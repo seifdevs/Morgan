@@ -8,4 +8,6 @@ test('environment validation reports problems without echoing secrets', () => {
   assert.equal(p.length, 5);
   assert.ok(!p.join(' ').includes('hunter2') && !p.join(' ').includes('re_secret'));
   assert.match(checkEnv({}, { uri: '' })[0], /MONGODB_URI is not set/);
+  assert.match(checkEnv({ RESEND_API_KEY: 'key', MAIL_FROM: 'Morgan <no-reply@example.test>' }, { uri: 'mongodb://localhost' })[0], /APP_URL is required/);
+  assert.match(checkEnv({ RESEND_API_KEY: 'key', MAIL_FROM: 'Morgan <no-reply@example.test>', APP_URL: 'http://localhost:4173' }, { uri: 'mongodb://localhost', production: true })[0], /HTTPS/);
 });

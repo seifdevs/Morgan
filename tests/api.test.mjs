@@ -15,6 +15,7 @@ const acceptedPurchase = { acceptedPolicies, purchaseTermsAccepted: true };
 let mongod, client, server, base, db, realFetch, originalEnv;
 const resendRequests = [];
 let resendFailure = null;
+let nextTestIp = 1;
 const geminiRequests = [];
 let geminiPayload = { answer: 'Based on your saved records, review the scheduled movement.', citations: [], recommendations: ['Review the forecast movement.'], unsupported: false };
 let geminiStatus = 200;
@@ -50,7 +51,7 @@ after(async () => {
 /** Tiny cookie-jar client. */
 function agent() {
   let cookie = '';
-  const ip = `10.0.0.${Math.floor(Math.random() * 250) + 1}`; // each agent is a distinct client for rate limiting
+  const ip = `10.20.0.${nextTestIp++}`; // each agent is a distinct client for rate limiting
   const call = async (method, path, body, headers = {}) => {
     const res = await fetch(base + path, {
       method,
@@ -73,10 +74,19 @@ async function tokenFromLatest(email, subject = 'Verify your Morgan email') {
   assert.ok(match, 'email includes a one-time link');
   return match[1];
 }
+async function verifySignup(a, email) {
+  const token = await tokenFromLatest(email);
+  const verified = await a.call('POST', '/auth/verify-email', { token });
+  assert.equal(verified.status, 200, 'verification link activates the account');
+  const login = await a.call('POST', '/auth/login', { email, password: 'correct horse 42' });
+  assert.equal(login.status, 200, 'verified account can sign in');
+}
 async function reg(a, email, extra = {}) {
   const created = await rawReg(a, email, extra);
   if (created.status === 201) {
-    assert.ok(a.cookie, 'signup creates an authenticated session');
+    assert.equal(created.body.verificationRequired, true);
+    assert.equal(a.cookie, '', 'signup does not create an authenticated session');
+    await verifySignup(a, email);
     const step1 = await a.call('PATCH', '/financial-setup', { onboardingStep: 1 }); assert.equal(step1.status, 200);
     const step2 = await a.call('PATCH', '/financial-setup', { onboardingStep: 2, expectedActivityReviewed: true }); assert.equal(step2.status, 200);
     const step3 = await a.call('PATCH', '/financial-setup', { monthlyBudgetCents: 0, minimumCashCents: 0, onboardingStep: 3 }); assert.equal(step3.status, 200);
@@ -114,13 +124,17 @@ test('registration validates input and rejects duplicates', async () => {
   assert.equal(ok.status, 201);
   assert.equal(ok.body.user.email, 'alice@example.com');
   assert.ok(ok.body.business.id);
-  assert.ok(a.cookie, 'signup immediately creates a financial workspace session');
+  assert.equal(ok.body.verificationRequired, true);
+  assert.equal(a.cookie, '', 'signup requires email verification before creating a session');
   const stored = await db.collection('users').findOne({ email: 'alice@example.com' });
   assert.deepEqual(stored.policyVersionsAccepted, Object.fromEntries(policies.map(({ id, version }) => [id, version])));
   assert.equal(await db.collection('policyAcceptances').countDocuments({ userId: stored._id, source: 'registration' }), 3);
-  assert.equal(stored.emailVerified, true);
-  assert.equal(await db.collection('verificationTokens').countDocuments({ userId: stored._id }), 0);
-  assert.ok(!resendRequests.some((m) => m.subject === 'Verify your Morgan email' && m.to.includes('alice@example.com')));
+  assert.equal(stored.emailVerified, false);
+  assert.equal(await db.collection('verificationTokens').countDocuments({ userId: stored._id }), 1);
+  assert.ok(resendRequests.some((m) => m.subject === 'Verify your Morgan email' && m.to.includes('alice@example.com')));
+  assert.equal((await a.call('GET', '/transactions')).status, 401, 'unverified account cannot access the dashboard');
+  await verifySignup(a, 'alice@example.com');
+  assert.equal((await db.collection('users').findOne({ email: 'alice@example.com' })).emailVerified, true);
   assert.equal((await a.call('GET', '/transactions')).status, 403, 'dashboard API is gated until financial onboarding is complete');
   const p1 = await a.call('PATCH', '/financial-setup', { onboardingStep: 1 }); assert.equal(p1.status, 200);
   const p2 = await a.call('PATCH', '/financial-setup', { onboardingStep: 2, expectedActivityReviewed: true }); assert.equal(p2.status, 200);
@@ -143,6 +157,7 @@ test('registration succeeds without a bank statement and creates an empty worksp
   assert.equal(result.body.business.currency, 'EUR');
   assert.equal(result.body.business.openingBalanceCents, 0);
   assert.equal(result.body.business.openingBalanceDate, null);
+  await verifySignup(account, 'no-statement@example.com');
   const businessId = new ObjectId(result.body.business.id);
   assert.equal(await db.collection('bankAccounts').countDocuments({ businessId }), 0);
   assert.equal(await db.collection('statementImports').countDocuments({ businessId }), 0);
@@ -172,6 +187,7 @@ test('registration imports only server-extracted statement data and requires rec
   assert.equal(mismatch.status, 400); assert.match(mismatch.body.error, /do not reconcile/);
   const created = await rawReg(a, 'statement-owner@example.com', { statementFileBase64: source, statementFilename: 'real.csv', openingBalanceCents: 10000, closingBalanceCents: 13000 });
   assert.equal(created.status, 201);
+  await verifySignup(a, 'statement-owner@example.com');
   const bid = new ObjectId(created.body.business.id);
   const txns = await db.collection('transactions').find({ businessId: bid }).sort({ date: 1 }).toArray();
   assert.equal(txns.length, 2); assert.equal(txns[0].description, 'Opening client receipt'); assert.equal(txns[1].amountCents, -2000);
@@ -210,19 +226,20 @@ test('signup succeeds without sending email when the provider is unavailable', a
   resendFailure = null;
   assert.equal(result.status, 201);
   assert.ok(result.body.user);
-  assert.ok(a.cookie);
+  assert.equal(a.cookie, '');
   const user = await db.collection('users').findOne({ email: 'kept@example.com' });
   assert.ok(user, 'account creation is independent of Resend');
-  assert.equal(user.emailVerified, true);
-  assert.equal(await db.collection('verificationTokens').countDocuments({ userId: user._id }), 0);
-  assert.equal(await db.collection('emailEvents').countDocuments({ kind: 'verification' }), 0);
-  assert.equal((await a.call('POST', '/auth/login', { email: 'kept@example.com', password: 'correct horse 42' })).status, 200);
+  assert.equal(user.emailVerified, false);
+  assert.equal(await db.collection('verificationTokens').countDocuments({ userId: user._id }), 1);
+  assert.equal(await db.collection('emailEvents').countDocuments({ kind: 'verification', status: 'rejected' }), 1);
+  assert.equal((await a.call('POST', '/auth/login', { email: 'kept@example.com', password: 'correct horse 42' })).status, 403);
 });
 
 test('verification handles invalid, expired, used links and resend requests', async () => {
   const a = agent();
   const created = await rawReg(a, 'verify-lifecycle@example.com');
   assert.equal(created.status, 201);
+  assert.equal((await a.call('POST', '/auth/login', { email: 'verify-lifecycle@example.com', password: 'correct horse 42' })).status, 403);
   assert.equal((await a.call('POST', '/auth/verify-email', { token: 'invalid-token' })).status, 400);
   const user = await db.collection('users').findOne({ email: 'verify-lifecycle@example.com' });
   const expired = await issueVerification(user, new Date(Date.now() - 1000));
@@ -406,8 +423,14 @@ test('production headers: CSP, HSTS, secure cookie, health check', async () => {
     assert.match(h.headers.get('strict-transport-security'), /max-age/);
     const r = await fetch(url + '/auth/register', { method: 'POST', headers: { 'content-type': 'application/json', 'x-morgan-csrf': '1' }, body: JSON.stringify({ name: 'S', email: 'secure@example.com', password: 'correct horse 42', businessName: 'S', country: 'US', bankId: '628', currency: 'USD', statementCurrencyConfirmed: true, statementFilename: 'statement.csv', statementFileBase64: statementFile, openingBalanceCents: 0, closingBalanceCents: 100, statementReviewed: true, acceptedPolicies }) });
     assert.equal(r.status, 201);
-    assert.match(r.headers.get('set-cookie'), /; Secure/, 'registration issues the authenticated session over a secure cookie');
+    assert.equal(r.headers.get('set-cookie'), null, 'registration waits for verification before creating a session');
+    const denied = await fetch(url + '/auth/login', { method: 'POST', headers: { 'content-type': 'application/json', 'x-morgan-csrf': '1' }, body: JSON.stringify({ email: 'secure@example.com', password: 'correct horse 42' }) });
+    assert.equal(denied.status, 403, 'unverified account cannot sign in');
+    const token = await tokenFromLatest('secure@example.com');
+    const verified = await fetch(url + '/auth/verify-email', { method: 'POST', headers: { 'content-type': 'application/json', 'x-morgan-csrf': '1' }, body: JSON.stringify({ token }) });
+    assert.equal(verified.status, 200);
     const login = await fetch(url + '/auth/login', { method: 'POST', headers: { 'content-type': 'application/json', 'x-morgan-csrf': '1' }, body: JSON.stringify({ email: 'secure@example.com', password: 'correct horse 42' }) });
+    assert.equal(login.status, 200);
     assert.match(login.headers.get('set-cookie'), /; Secure/);
   } finally { prodServer.close(); }
 });
@@ -926,6 +949,7 @@ test('expired sessions are rejected server-side', async () => {
 test('financial setup, expected schedules, forecast edits and business isolation persist', async () => {
   const a = agent(), other = agent();
   const created = await rawReg(a, 'planner@example.com');
+  await verifySignup(a, 'planner@example.com');
   await reg(other, 'different-planner@example.com');
   assert.equal(created.body.business.financialSetupComplete, false);
   const setup = await a.call('GET', '/financial-setup');

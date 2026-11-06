@@ -236,9 +236,7 @@ export function createApi(db, { secureCookies }) {
     if (await C('users').findOne({ email: mail })) throw new HttpError(409, 'An account with this email already exists');
     const businessId = new ObjectId();
     const isConfiguredAdmin = mail === String(process.env.MORGAN_ADMIN_EMAIL || '').trim().toLowerCase();
-    // Email confirmation is temporarily disabled. Password validation and the normal
-    // server-side session remain required for access.
-    const user = { _id: new ObjectId(), name, email: mail, role: isConfiguredAdmin ? 'admin' : 'user', planId: 'starter', billingStatus: 'free', passwordHash: await hashPassword(password), businessId, emailVerified: true, emailVerificationDisabled: true, policyVersionsAccepted: policyVersions, createdAt: new Date() };
+    const user = { _id: new ObjectId(), name, email: mail, role: isConfiguredAdmin ? 'admin' : 'user', planId: 'starter', billingStatus: 'free', passwordHash: await hashPassword(password), businessId, emailVerified: false, policyVersionsAccepted: policyVersions, createdAt: new Date() };
     const accountId = hasStatement ? new ObjectId() : null, importId = hasStatement ? new ObjectId() : null, importedAt = new Date();
     const statementQuery = { businessId };
     let registrationReservation;
@@ -269,8 +267,8 @@ export function createApi(db, { secureCookies }) {
       if (e.code === 11000) throw new HttpError(409, 'An account with this email already exists');
       throw e;
     }
-    setCookie(res, await createSession(db, user, req));
-    res.status(201).json({ user: publicUser(user), business: publicBusiness(await business({ businessId: user.businessId })) });
+    const emailResult = await sendVerification(user);
+    res.status(201).json({ verificationRequired: true, emailStatus: emailResult.status, emailMessage: emailResult.message || null, emailCategory: emailResult.code || null, user: publicUser(user), business: publicBusiness(await business({ businessId: user.businessId })) });
   }));
 
   r.post('/auth/demo', rateLimit({ key: 'demo-account', limit: 10, windowMs: 3600e3 }), wrap(async (req, res) => {
@@ -322,11 +320,9 @@ export function createApi(db, { secureCookies }) {
     const ok = await verifyPassword(password, user?.passwordHash || DUMMY_HASH);
     if (!user || !ok) throw new HttpError(401, 'Email or password is incorrect');
     if (user.disabledAt || user.status === 'disabled') throw new HttpError(403, 'This account is disabled. Contact the workspace administrator.');
-    // Allow accounts created before confirmation was paused to sign in as well.
-    if (user.emailVerified !== true) await C('users').updateOne({ _id: user._id }, { $set: { emailVerified: true, emailVerificationDisabled: true } });
-    const sessionUser = user.emailVerified === true ? user : { ...user, emailVerified: true, emailVerificationDisabled: true };
-    setCookie(res, await createSession(db, sessionUser, req));
-    res.json({ user: publicUser(sessionUser), business: publicBusiness(await business({ businessId: user.businessId })) });
+    if (user.emailVerified !== true) throw new HttpError(403, 'Verify your email before signing in. Check your inbox or request a new verification email.');
+    setCookie(res, await createSession(db, user, req));
+    res.json({ user: publicUser(user), business: publicBusiness(await business({ businessId: user.businessId })) });
   }));
 
   r.post('/auth/logout', wrap(async (req, res) => {

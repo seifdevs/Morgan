@@ -83,6 +83,7 @@ export function Auth({ mode }: { mode: 'login' | 'signup' }) {
   const [statementReviewed, setStatementReviewed] = useState(false);
   const [currencyConfirmed, setCurrencyConfirmed] = useState(false);
   const [policyAccepted, setPolicyAccepted] = useState(false);
+  const [verificationPending, setVerificationPending] = useState<{ email: string; status: string; message?: string | null } | null>(null);
   const set = (k: keyof typeof form) => (v: string) => setForm((f) => ({ ...f, [k]: v }));
   useEffect(() => {
     if (!signup || country !== 'US') { setBanks([]); setBanksLoading(false); setBanksError(''); return; }
@@ -117,7 +118,12 @@ export function Auth({ mode }: { mode: 'login' | 'signup' }) {
       if (signup && statementPreview && !currencyConfirmed) throw new Error('Confirm that the uploaded statement uses USD.');
       if (signup && !policyAccepted) throw new Error('Accept the current Morgan policies before creating your account.');
       const includeStatement = signup && Boolean(statementPreview && statementFile);
-      const res = await api<{ user?: User; business?: Business }>(signup ? '/auth/register' : '/auth/login', { method: 'POST', body: { ...f, ...(signup && { currency: includeStatement ? 'USD' : form.currency, ...(includeStatement && { country, bankId, statementCurrencyConfirmed: currencyConfirmed, statementFilename: statementFile?.name, statementFileBase64: statementFile?.base64, statementReviewed, duplicatesReviewed: statementReviewed, openingBalanceCents: new FormData(e.currentTarget).get('openingBalance'), closingBalanceCents: new FormData(e.currentTarget).get('closingBalance') }), acceptedPolicies: policies.map(({ id, version }) => ({ policyId: id, version })) }), timezone: Intl.DateTimeFormat().resolvedOptions().timeZone } });
+      const res = await api<{ user?: User; business?: Business; verificationRequired?: boolean; emailStatus?: string; emailMessage?: string | null }>(signup ? '/auth/register' : '/auth/login', { method: 'POST', body: { ...f, ...(signup && { currency: includeStatement ? 'USD' : form.currency, ...(includeStatement && { country, bankId, statementCurrencyConfirmed: currencyConfirmed, statementFilename: statementFile?.name, statementFileBase64: statementFile?.base64, statementReviewed, duplicatesReviewed: statementReviewed, openingBalanceCents: new FormData(e.currentTarget).get('openingBalance'), closingBalanceCents: new FormData(e.currentTarget).get('closingBalance') }), acceptedPolicies: policies.map(({ id, version }) => ({ policyId: id, version })) }), timezone: Intl.DateTimeFormat().resolvedOptions().timeZone } });
+      if (signup && res.verificationRequired) {
+        setVerificationPending({ email: f.email, status: res.emailStatus || 'unknown', message: res.emailMessage });
+        setBusy(false);
+        return;
+      }
       if (!res.user || !res.business) throw new Error('The server returned an incomplete sign-in response.');
       setDest(signup ? '/app/onboarding' : next);
       setSession({ user: res.user, business: res.business });
@@ -135,7 +141,7 @@ export function Auth({ mode }: { mode: 'login' | 'signup' }) {
       <AuthShell kind="login" stage={<LoginStage headline={<>Welcome<br /><span>back.</span></>} sub="Your ledger is exactly where you left it — every figure tied to the record behind it." />}>
         <form className="auth-form" onSubmit={submit}>
           <h1>Open your ledger</h1>
-          {error && <div className="form-error" role="alert">{error}</div>}
+          {error && <div className="form-error" role="alert">{error}{error.toLowerCase().includes('verify your email') && <> <Link className="link" to="/verify-email">Request a verification email</Link></>}</div>}
           <div className="field"><label htmlFor="email">Email</label><input className="input" id="email" name="email" type="email" autoComplete="email" required autoFocus /></div>
           <PasswordField id="password" name="password" label="Password" autoComplete="current-password" />
           {passwordResetAvailable && <Link className="link" style={{ justifySelf: 'start', fontSize: 13 }} to="/forgot-password">Forgot password?</Link>}
@@ -144,6 +150,18 @@ export function Auth({ mode }: { mode: 'login' | 'signup' }) {
         </form>
       </AuthShell>
     );
+  }
+
+  if (verificationPending) {
+    const accepted = verificationPending.status === 'accepted';
+    return <AuthShell kind="signup" stage={<aside className="auth-stage"><span className="folio stage-folio">Almost there</span><LedgerCover name={form.name} business={form.businessName} currency={form.currency} strength={strength} /><p className="stage-caption">Verify your email to unlock your Morgan workspace.</p></aside>}>
+      <div className="auth-form"><h1>Check your email</h1><p>We created your account for <b>{verificationPending.email}</b>. Verify the address before signing in.</p>
+        <div className={accepted ? 'auth-success' : 'form-error'} role="status">{accepted ? 'Resend accepted the verification email request. Inbox delivery is not confirmed.' : verificationPending.message || 'The account is saved, but Resend could not accept the verification email yet.'}</div>
+        <p className="muted">The link expires in 24 hours and works once. If it does not arrive, you can request another message below.</p>
+        <ResendVerification initialEmail={verificationPending.email} />
+        <p className="auth-switch">Already verified? <Link className="link" to="/login">Log in</Link></p>
+      </div>
+    </AuthShell>;
   }
 
   return (

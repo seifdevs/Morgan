@@ -9,15 +9,17 @@ const root = resolve(fileURLToPath(new URL('..', import.meta.url)));
 const prod = process.argv.includes('--prod') || process.env.NODE_ENV === 'production';
 
 /** Fail fast with a clear message instead of a stack trace. Never prints secret values. */
-export function checkEnv(env, { uri }) {
+export function checkEnv(env, { uri, production = false } = {}) {
   const problems = [];
   if (!uri) problems.push('MONGODB_URI is not set. Add it to .env (see .env.example), or run `npm run dev:local` for a local database.');
   else if (!/^mongodb(\+srv)?:\/\//.test(uri)) problems.push('MONGODB_URI must start with mongodb:// or mongodb+srv://');
   if (env.MONGODB_DB && !/^[A-Za-z0-9_-]{1,63}$/.test(env.MONGODB_DB)) problems.push('MONGODB_DB may only contain letters, numbers, - and _');
   if (env.PORT && !(Number.isInteger(+env.PORT) && +env.PORT > 0 && +env.PORT < 65536)) problems.push('PORT must be a number between 1 and 65535');
   if (!!env.RESEND_API_KEY !== !!env.MAIL_FROM) problems.push('Set both RESEND_API_KEY and MAIL_FROM to enable email, or neither');
+  if (env.RESEND_API_KEY && env.MAIL_FROM && !env.APP_URL) problems.push('APP_URL is required when Resend email is enabled so verification links point back to the site');
   if (env.TRUST_PROXY && !['0', '1'].includes(env.TRUST_PROXY)) problems.push('TRUST_PROXY must be 0 or 1');
   if (env.APP_URL && !/^https?:\/\/[^/\s]+$/.test(env.APP_URL.replace(/\/$/, ''))) problems.push('APP_URL must be the public site origin, e.g. https://app.example.com');
+  if (production && env.RESEND_API_KEY && env.APP_URL && !env.APP_URL.startsWith('https://')) problems.push('APP_URL must use HTTPS when Resend email is enabled in production');
   if (env.MORGAN_ADMIN_EMAIL && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(env.MORGAN_ADMIN_EMAIL.trim())) problems.push('MORGAN_ADMIN_EMAIL must be a valid email address');
   return problems;
 }
@@ -25,7 +27,7 @@ export function checkEnv(env, { uri }) {
 export async function start({ uri = process.env.MONGODB_URI, dbName = process.env.MONGODB_DB || 'morgan' } = {}) {
   // Mail development fallbacks are enabled only from this resolved server mode.
   process.env.MORGAN_RUNTIME_MODE = prod ? 'production' : 'development';
-  const problems = checkEnv(process.env, { uri });
+  const problems = checkEnv(process.env, { uri, production: prod });
   if (problems.length) {
     console.error('Configuration error:\n- ' + problems.join('\n- '));
     process.exit(1);
